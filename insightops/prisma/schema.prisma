@@ -1,0 +1,108 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+model EventLog {
+  id          String   @id @default(uuid())
+  shop        String   // The store URL
+  shopifyId   String   // The Resource ID (e.g., Product ID)
+  topic       String   // e.g., "products/update"
+  author      String?  // The "Blame" retrieved via Events API
+  message     String   // Description of change
+  diff        String?  // JSON string: { old: value, new: value }
+  timestamp   DateTime @default(now())
+  webhookId   String?  @unique // Shopify webhook delivery ID for deduplication
+
+  @@index([shop])
+  @@index([shop, timestamp])
+  @@index([shop, shopifyId, topic])
+}
+
+// Lightweight product cache for resolving names on delete
+model ProductCache {
+  id        String   @id // Shopify product ID as string
+  shop      String
+  title     String
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, id])
+  @@index([shop])
+}
+
+// Background job queue for webhook processing
+// This allows us to ACK webhooks immediately and process asynchronously
+model WebhookJob {
+  id          String   @id @default(uuid())
+  shop        String
+  topic       String   // e.g., "products/update"
+  resourceId  String   // The Shopify resource ID
+  payload     String   // JSON stringified payload
+  webhookId   String?  @unique // For deduplication
+  status      String   @default("pending") // pending, processing, completed, failed
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+  processAt   DateTime @default(now()) // When to process (for delayed jobs)
+  completedAt DateTime?
+  error       String?
+
+  @@index([status, processAt])
+  @@index([shop])
+}
+
+// Shop sync status - tracks initial product sync progress
+model ShopSync {
+  shop        String   @id
+  status      String   @default("pending") // pending, syncing, completed, failed
+  totalProducts Int?
+  syncedProducts Int   @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+}
+
+// Aggregated product sales metrics (NO customer PII)
+// Stores revenue + units per product for a time bucket (hour/day).
+model ProductSalesPoint {
+  id          String   @id @default(uuid())
+  shop        String   // The store URL
+  productId   String   // Shopify product ID as string
+  bucketType  String   // "hour" | "day"
+  bucketStart DateTime // Start of bucket (UTC)
+  revenueCents Int     @default(0) // Store as cents to avoid float drift
+  units       Int     @default(0)
+  currency    String? // Optional - store currency code if available
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, productId, bucketType, bucketStart])
+  @@index([shop, bucketType, bucketStart])
+  @@index([shop, productId, bucketType, bucketStart])
+}
