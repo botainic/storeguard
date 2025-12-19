@@ -1,4 +1,5 @@
 import db from "../db.server";
+import { apiVersion } from "../shopify.server";
 import {
   getPendingJobs,
   markJobProcessing,
@@ -268,8 +269,8 @@ async function fetchAuthor(
     // We avoid any REST URL under `/products/*` and instead use the generic Events API.
     const endpoint =
       resourceType === "Product"
-        ? `https://${shop}/admin/api/2024-10/events.json?filter=Product&limit=20`
-        : `https://${shop}/admin/api/2024-10/events.json?filter=Collection&limit=20`;
+        ? `https://${shop}/admin/api/${apiVersion}/events.json?filter=Product&limit=20`
+        : `https://${shop}/admin/api/${apiVersion}/events.json?filter=Collection&limit=20`;
 
     const response = await fetch(endpoint, {
       headers: {
@@ -569,7 +570,7 @@ async function processInventoryUpdate(
   try {
     // GraphQL replacement for deprecated REST /products and /variants
     // Get variant + product info using the inventory item id.
-    const gql = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+    const gql = await fetch(`https://${shop}/admin/api/${apiVersion}/graphql.json`, {
       method: "POST",
       headers: {
         "X-Shopify-Access-Token": accessToken,
