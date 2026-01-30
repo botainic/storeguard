@@ -17,11 +17,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const needsSync = await needsProductSync(session.shop);
   if (needsSync || resync) {
     console.log(
-      `[InsightOps] ${resync ? "Manual resync" : "First visit"} - syncing products in background for ${session.shop}`
+      `[StoreGuard] ${resync ? "Manual resync" : "First visit"} - syncing products in background for ${session.shop}`
     );
     // Fire and forget - don't await
     syncProducts(session.shop, admin, { force: resync }).catch((err) => {
-      console.error(`[InsightOps] Background sync failed:`, err);
+      console.error(`[StoreGuard] Background sync failed:`, err);
     });
   }
 
@@ -38,12 +38,12 @@ export default function App() {
       {!isEmbedded ? (
         <div style={{ padding: 20, fontFamily: "-apple-system, BlinkMacSystemFont, \"San Francisco\", \"Segoe UI\", Roboto, \"Helvetica Neue\", sans-serif" }}>
           <div style={{ maxWidth: 720, margin: "0 auto", background: "#fff", border: "1px solid #e1e3e5", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Open InsightOps from Shopify Admin</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Open StoreGuard from Shopify Admin</div>
             <div style={{ fontSize: 13, color: "#637381", marginBottom: 12 }}>
-              This page is missing the required <code>host</code> parameter, so Shopify App Bridge can’t authenticate requests (you’ll see “Failed to fetch”).
+              This page is missing the required <code>host</code> parameter, so Shopify App Bridge can't authenticate requests (you'll see "Failed to fetch").
             </div>
             <div style={{ fontSize: 13, color: "#637381" }}>
-              Go to <strong>Apps → InsightOps</strong> inside Shopify Admin for <strong>{shop}</strong>.
+              Go to <strong>Apps → StoreGuard</strong> inside Shopify Admin for <strong>{shop}</strong>.
             </div>
           </div>
         </div>

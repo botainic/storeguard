@@ -33,7 +33,7 @@ export async function queueWebhookJob(data: WebhookJobData): Promise<string> {
     },
   });
 
-  console.log(`[InsightOps] Queued job ${job.id} for ${data.topic}`);
+  console.log(`[StoreGuard] Queued job ${job.id} for ${data.topic}`);
 
   // Auto-schedule job processing (fire-and-forget)
   scheduleJobProcessing(data.delayMs ? data.delayMs + 500 : 500);
@@ -56,10 +56,10 @@ function scheduleJobProcessing(delayMs: number): void {
       const { processPendingJobs } = await import("./jobProcessor.server");
       const result = await processPendingJobs();
       if (result.processed > 0 || result.failed > 0) {
-        console.log(`[InsightOps] Processed ${result.processed} jobs, ${result.failed} failed`);
+        console.log(`[StoreGuard] Processed ${result.processed} jobs, ${result.failed} failed`);
       }
     } catch (error) {
-      console.error("[InsightOps] Background processor error:", error);
+      console.error("[StoreGuard] Background processor error:", error);
     } finally {
       processorScheduled = false;
     }
@@ -161,7 +161,7 @@ export async function cleanupOldJobs(olderThanDays: number = 7) {
   });
 
   if (result.count > 0) {
-    console.log(`[InsightOps] Cleaned up ${result.count} old jobs`);
+    console.log(`[StoreGuard] Cleaned up ${result.count} old jobs`);
   }
 
   return result.count;

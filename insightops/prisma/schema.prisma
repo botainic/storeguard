@@ -31,6 +31,52 @@ model Session {
   emailVerified Boolean?  @default(false)
 }
 
+// Shop settings and configuration
+model Shop {
+  id              String    @id @default(uuid())
+  shopifyDomain   String    @unique // e.g., "mystore.myshopify.com"
+  plan            String    @default("free") // "free" | "pro"
+  alertEmail      String?   // Email for daily digest
+  trackPrices     Boolean   @default(true)
+  trackVisibility Boolean   @default(true)
+  trackInventory  Boolean   @default(true)
+  trackThemes     Boolean   @default(false) // Pro only
+  installedAt     DateTime  @default(now())
+  uninstalledAt   DateTime?
+}
+
+// Change events for alerting (core of StoreGuard)
+model ChangeEvent {
+  id           String    @id @default(uuid())
+  shop         String    // Store URL
+  eventType    String    // "price_change" | "status_change" | "inventory_zero" | "theme_publish"
+  resourceId   String    // Product/Theme ID
+  resourceName String    // Product/Theme title for display
+  beforeValue  String?   // Previous value (JSON or simple string)
+  afterValue   String?   // New value (JSON or simple string)
+  detectedAt   DateTime  @default(now())
+  digestedAt   DateTime? // When included in daily digest (null = not yet sent)
+  webhookId    String    @unique // Deduplication
+
+  @@index([shop])
+  @@index([shop, detectedAt])
+  @@index([shop, eventType])
+  @@index([digestedAt])
+}
+
+// Product state snapshot for change detection
+model ProductSnapshot {
+  id        String   @id // Shopify product ID
+  shop      String
+  title     String
+  status    String   // "active" | "draft" | "archived"
+  variants  String   // JSON: [{id, title, price, inventoryQuantity}]
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, id])
+  @@index([shop])
+}
+
 model EventLog {
   id          String   @id @default(uuid())
   shop        String   // The store URL

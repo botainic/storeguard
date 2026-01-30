@@ -24,7 +24,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Check for duplicate (already processed or queued)
   if (webhookId && await isWebhookProcessed(webhookId)) {
-    console.log(`[InsightOps] Duplicate webhook ${webhookId}, skipping`);
+    console.log(`[StoreGuard] Duplicate webhook ${webhookId}, skipping`);
     return new Response();
   }
 
@@ -41,9 +41,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       delayMs: 2000,
     });
 
-    console.log(`[InsightOps] Queued ${topic} for inventory item ${inventoryPayload.inventory_item_id}`);
+    console.log(`[StoreGuard] Queued ${topic} for inventory item ${inventoryPayload.inventory_item_id}`);
   } catch (error) {
-    console.error(`[InsightOps] Failed to queue job:`, error);
+    console.error(`[StoreGuard] Failed to queue job:`, error);
   }
 
   // Always return 200 OK immediately

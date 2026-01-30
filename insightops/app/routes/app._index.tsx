@@ -132,7 +132,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
       isPro = hasActivePayment;
     } catch (error) {
-      console.error("[InsightOps] Billing check failed:", error);
+      console.error("[StoreGuard] Billing check failed:", error);
       isPro = false;
     }
   }
@@ -164,15 +164,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Fetch events for this shop within date range
   // Exclude baseline snapshot events (internal use only for diff comparison)
-  console.log(`[InsightOps] Fetching events for shop: "${session.shop}" since ${startDate.toISOString()}`);
+  console.log(`[StoreGuard] Fetching events for shop: "${session.shop}" since ${startDate.toISOString()}`);
 
   // Debug: Check total events in db
   const totalEventsInDb = await db.eventLog.count();
-  console.log(`[InsightOps] Total events in database: ${totalEventsInDb}`);
+  console.log(`[StoreGuard] Total events in database: ${totalEventsInDb}`);
 
   // Debug: Check events for this shop (no filters)
   const eventsForShop = await db.eventLog.count({ where: { shop: session.shop } });
-  console.log(`[InsightOps] Events for shop "${session.shop}": ${eventsForShop}`);
+  console.log(`[StoreGuard] Events for shop "${session.shop}": ${eventsForShop}`);
 
   // Pro users get more events, free users limited to 50
   // INCREASED LIMIT: To ensure chart interactivity works, we need enough events
@@ -189,7 +189,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { timestamp: "desc" },
     take: eventLimit,
   });
-  console.log(`[InsightOps] Found ${events.length} events for timeline`);
+  console.log(`[StoreGuard] Found ${events.length} events for timeline`);
 
   // Use demo data for screenshots, or fetch real sales data
   let salesData;
@@ -1437,7 +1437,7 @@ export default function Dashboard() {
           />
           <div>
             <div style={{ fontSize: "13px", fontWeight: "600", color: "#0070f3" }}>
-              Setting up InsightOps...
+              Setting up StoreGuard...
             </div>
             <div style={{ fontSize: "12px", color: "#637381" }}>
               {syncStatus.syncedProducts > 0

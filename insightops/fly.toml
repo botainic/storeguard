@@ -1,7 +1,7 @@
-# fly.toml - Fly.io configuration for InsightOps
+# fly.toml - Fly.io configuration for StoreGuard
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 
-app = "insightops-app"
+app = "storeguard-app"
 primary_region = "iad"
 
 [build]

@@ -15,7 +15,7 @@ import { cleanupOldJobs } from "../services/jobQueue.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   // Simple auth check - in production, use a proper secret
   const authHeader = request.headers.get("Authorization");
-  const expectedToken = process.env.JOB_PROCESSOR_SECRET || "insightops-jobs";
+  const expectedToken = process.env.JOB_PROCESSOR_SECRET || "storeguard-jobs";
 
   if (authHeader !== `Bearer ${expectedToken}`) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -45,7 +45,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     );
   } catch (error) {
-    console.error("[InsightOps] Job processor error:", error);
+    console.error("[StoreGuard] Job processor error:", error);
     return new Response(
       JSON.stringify({ error: String(error) }),
       {

@@ -129,6 +129,7 @@ function createProductSnapshot(payload: ProductPayload): ProductSnapshot {
       compareAtPrice: v.compare_at_price,
       sku: v.sku,
       inventory: v.inventory_quantity,
+      weight: v.weight ?? null,
     })),
     options: payload.options?.map((o) => ({
       name: o.name,
@@ -280,7 +281,7 @@ async function fetchAuthor(
     });
 
     if (!response.ok) {
-      console.log(`[InsightOps] Events API returned ${response.status}`);
+      console.log(`[StoreGuard] Events API returned ${response.status}`);
       return null;
     }
 
@@ -291,7 +292,7 @@ async function fetchAuthor(
     const matchingEvent = data.events.find((e) => e.subject_id === resourceId && e.verb === verb);
     return matchingEvent?.author || data.events[0]?.author || null;
   } catch (error) {
-    console.error(`[InsightOps] Failed to fetch events:`, error);
+    console.error(`[StoreGuard] Failed to fetch events:`, error);
     return null;
   }
 }
@@ -377,7 +378,7 @@ async function processProductUpdate(
     },
   });
 
-  console.log(`[InsightOps] Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**
@@ -432,7 +433,7 @@ async function processProductCreate(
     },
   });
 
-  console.log(`[InsightOps] Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**
@@ -483,7 +484,7 @@ async function processProductDelete(
     },
   });
 
-  console.log(`[InsightOps] Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**
@@ -525,7 +526,7 @@ async function processCollection(
       },
     });
 
-    console.log(`[InsightOps] Logged: ${message}`);
+    console.log(`[StoreGuard] Logged: ${message}`);
     return;
   }
 
@@ -545,7 +546,7 @@ async function processCollection(
     },
   });
 
-  console.log(`[InsightOps] Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**
@@ -607,12 +608,12 @@ async function processInventoryUpdate(
       productId = m?.[1] ?? "";
     }
   } catch (fetchError) {
-    console.error(`[InsightOps] Failed to fetch product info:`, fetchError);
+    console.error(`[StoreGuard] Failed to fetch product info:`, fetchError);
   }
 
   // Skip gift cards - they generate noise and aren't useful to track
   if (productTitle.toLowerCase().includes("gift card") || productType.toLowerCase() === "gift_card") {
-    console.log(`[InsightOps] Skipping gift card inventory update: ${productTitle}`);
+    console.log(`[StoreGuard] Skipping gift card inventory update: ${productTitle}`);
     return;
   }
 
@@ -635,12 +636,12 @@ async function processInventoryUpdate(
         const orderDiff = JSON.parse(recentOrder.diff);
         const orderProductIds = orderDiff.items?.map((item: { productId: number }) => String(item.productId)) || [];
         if (orderProductIds.includes(productId)) {
-          console.log(`[InsightOps] Skipping inventory update - caused by recent order ${orderDiff.orderName}`);
+          console.log(`[StoreGuard] Skipping inventory update - caused by recent order ${orderDiff.orderName}`);
           return;
         }
       }
     } catch (filterError) {
-      console.error(`[InsightOps] Noise filter check failed:`, filterError);
+      console.error(`[StoreGuard] Noise filter check failed:`, filterError);
     }
   }
 
@@ -661,7 +662,7 @@ async function processInventoryUpdate(
       oldAvailable = prevDiff.available;
     }
   } catch (prevError) {
-    console.error(`[InsightOps] Failed to fetch previous inventory:`, prevError);
+    console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
   }
 
   const displayName =
@@ -700,7 +701,7 @@ async function processInventoryUpdate(
     },
   });
 
-  console.log(`[InsightOps] ✅ Logged: ${message}`);
+  console.log(`[StoreGuard] ✅ Logged: ${message}`);
 }
 
 /**
@@ -747,7 +748,7 @@ async function processJob(job: {
       await processInventoryUpdate(job.shop, session.accessToken, payload, job.webhookId);
       break;
     default:
-      console.log(`[InsightOps] Unknown topic: ${job.topic} (normalized: ${normalizedTopic})`);
+      console.log(`[StoreGuard] Unknown topic: ${job.topic} (normalized: ${normalizedTopic})`);
   }
 }
 
@@ -769,7 +770,7 @@ export async function processPendingJobs(): Promise<{
       await markJobCompleted(job.id);
       processed++;
     } catch (error) {
-      console.error(`[InsightOps] Job ${job.id} failed:`, error);
+      console.error(`[StoreGuard] Job ${job.id} failed:`, error);
       await markJobFailed(job.id, String(error));
       failed++;
     }

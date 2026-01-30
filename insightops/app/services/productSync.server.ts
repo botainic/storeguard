@@ -211,7 +211,7 @@ export async function syncProducts(
       const products = data.data?.products;
 
       if (!products) {
-        console.error("[InsightOps] Failed to fetch products from GraphQL");
+        console.error("[StoreGuard] Failed to fetch products from GraphQL");
         break;
       }
 
@@ -263,7 +263,7 @@ export async function syncProducts(
                 shop,
                 shopifyId: numericId,
                 topic: "products/snapshot",
-                author: "InsightOps",
+                author: "StoreGuard",
                 message: `Baseline snapshot for "${product.title}"`,
                 diff,
                 webhookId: null,
@@ -275,7 +275,7 @@ export async function syncProducts(
                 shop,
                 shopifyId: numericId,
                 topic: "products/snapshot",
-                author: "InsightOps",
+                author: "StoreGuard",
                 message: `Refreshed baseline snapshot for "${product.title}"`,
                 diff,
                 webhookId: null,
@@ -306,7 +306,7 @@ export async function syncProducts(
 
       // Log progress for large catalogs
       if (synced % 100 === 0 && synced > 0) {
-        console.log(`[InsightOps] Sync progress: ${synced} products...`);
+        console.log(`[StoreGuard] Sync progress: ${synced} products...`);
       }
     }
 
@@ -320,10 +320,10 @@ export async function syncProducts(
       },
     });
 
-    console.log(`[InsightOps] Synced ${synced} products with baseline snapshots for ${shop}`);
+    console.log(`[StoreGuard] Synced ${synced} products with baseline snapshots for ${shop}`);
     return { synced };
   } catch (error) {
-    console.error("[InsightOps] Product sync failed:", error);
+    console.error("[StoreGuard] Product sync failed:", error);
 
     // Mark sync as failed
     await db.shopSync.update({

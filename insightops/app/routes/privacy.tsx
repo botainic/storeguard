@@ -8,11 +8,11 @@ export default function Privacy() {
       lineHeight: 1.6,
       color: "#1a1a1a"
     }}>
-      <h1 style={{ fontSize: "32px", marginBottom: "8px" }}>Privacy Policy for InsightOps</h1>
-      <p style={{ color: "#637381", marginBottom: "32px" }}><strong>Effective Date:</strong> December 16, 2025</p>
+      <h1 style={{ fontSize: "32px", marginBottom: "8px" }}>Privacy Policy for StoreGuard</h1>
+      <p style={{ color: "#637381", marginBottom: "32px" }}><strong>Effective Date:</strong> January 30, 2026</p>
 
       <p>
-        InsightOps ("the App") provides audit logging and sales impact analysis services to merchants
+        StoreGuard ("the App") provides store monitoring and change alert services to merchants
         who use Shopify to power their stores. This Privacy Policy describes how personal information
         is collected, used, and shared when you install or use the App in connection with your
         Shopify-supported store.

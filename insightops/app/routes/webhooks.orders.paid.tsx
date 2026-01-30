@@ -30,10 +30,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, session, topic, payload } =
     await authenticate.webhook(request);
 
-  console.log(`[InsightOps] Received ${topic} webhook for ${shop} (ID: ${webhookId})`);
+  console.log(`[StoreGuard] Received ${topic} webhook for ${shop} (ID: ${webhookId})`);
 
   if (!session) {
-    console.log(`[InsightOps] No session found for ${shop}, skipping order`);
+    console.log(`[StoreGuard] No session found for ${shop}, skipping order`);
     return new Response();
   }
 
@@ -43,7 +43,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { webhookId },
     });
     if (existing) {
-      console.log(`[InsightOps] Duplicate order webhook ${webhookId}, skipping`);
+      console.log(`[StoreGuard] Duplicate order webhook ${webhookId}, skipping`);
       return new Response();
     }
   }
@@ -100,7 +100,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
   });
 
-  console.log(`[InsightOps] ✅ Logged order: ${message}`);
+  console.log(`[StoreGuard] ✅ Logged order: ${message}`);
 
   return new Response();
 };

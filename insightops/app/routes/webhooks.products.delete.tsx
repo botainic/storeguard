@@ -20,7 +20,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (webhookId && await isWebhookProcessed(webhookId)) {
-    console.log(`[InsightOps] Duplicate webhook ${webhookId}, skipping`);
+    console.log(`[StoreGuard] Duplicate webhook ${webhookId}, skipping`);
     return new Response();
   }
 
@@ -37,9 +37,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       delayMs: 0, // Process immediately
     });
 
-    console.log(`[InsightOps] Queued ${topic} for product ${product.id}`);
+    console.log(`[StoreGuard] Queued ${topic} for product ${product.id}`);
   } catch (error) {
-    console.error(`[InsightOps] Failed to queue job:`, error);
+    console.error(`[StoreGuard] Failed to queue job:`, error);
   }
 
   return new Response();

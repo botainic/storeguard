@@ -32,7 +32,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Check for duplicate (already processed or queued)
   if (webhookId && await isWebhookProcessed(webhookId)) {
-    console.log(`[InsightOps] Duplicate webhook ${webhookId}, skipping`);
+    console.log(`[StoreGuard] Duplicate webhook ${webhookId}, skipping`);
     return new Response();
   }
 
@@ -50,10 +50,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       delayMs: 2000, // Wait for Shopify Events API to populate
     });
 
-    console.log(`[InsightOps] Queued ${topic} for product ${product.id}`);
+    console.log(`[StoreGuard] Queued ${topic} for product ${product.id}`);
   } catch (error) {
     // If queue fails (e.g., duplicate), just log and continue
-    console.error(`[InsightOps] Failed to queue job:`, error);
+    console.error(`[StoreGuard] Failed to queue job:`, error);
   }
 
   // Always return 200 OK immediately

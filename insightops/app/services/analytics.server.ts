@@ -81,7 +81,7 @@ export async function fetchSalesData(
   // For "today", always use Orders API for real-time data
   // ShopifyQL Analytics has a 15-30 minute data lag which makes recent sales invisible
   if (range === "today") {
-    console.log("[InsightOps] Using Orders API for real-time 'today' view");
+    console.log("[StoreGuard] Using Orders API for real-time 'today' view");
     return fetchSalesFromOrders(admin, range, now);
   }
 
@@ -113,18 +113,18 @@ export async function fetchSalesData(
 
     // Check for errors
     if (data.errors?.length) {
-      console.error("[InsightOps] ShopifyQL errors:", data.errors);
+      console.error("[StoreGuard] ShopifyQL errors:", data.errors);
       throw new Error(data.errors[0].message);
     }
 
     if (data.data?.shopifyqlQuery.parseErrors?.length) {
-      console.error("[InsightOps] ShopifyQL parse errors:", data.data.shopifyqlQuery.parseErrors);
+      console.error("[StoreGuard] ShopifyQL parse errors:", data.data.shopifyqlQuery.parseErrors);
       throw new Error(data.data.shopifyqlQuery.parseErrors[0]);
     }
 
     const tableData = data.data?.shopifyqlQuery.tableData;
     if (!tableData?.rows?.length) {
-      console.log("[InsightOps] No analytics data returned");
+      console.log("[StoreGuard] No analytics data returned");
       return { salesData: generateEmptyData(range, now), usedAnalytics: true };
     }
 
@@ -152,10 +152,10 @@ export async function fetchSalesData(
       };
     });
 
-    console.log(`[InsightOps] Fetched ${salesData.length} data points via ShopifyQL`);
+    console.log(`[StoreGuard] Fetched ${salesData.length} data points via ShopifyQL`);
     return { salesData, usedAnalytics: true };
   } catch (error) {
-    console.error("[InsightOps] ShopifyQL failed, falling back to orders:", error);
+    console.error("[StoreGuard] ShopifyQL failed, falling back to orders:", error);
 
     // Fallback to order-based fetching
     return fetchSalesFromOrders(admin, range, now);
@@ -228,7 +228,7 @@ async function fetchSalesFromOrders(
     const data = await response.json();
     const orders = data.data?.orders?.edges || [];
 
-    console.log(`[InsightOps] Fetched ${orders.length} orders since ${startDate.toISOString()} (${startDate.toLocaleString()})`);
+    console.log(`[StoreGuard] Fetched ${orders.length} orders since ${startDate.toISOString()} (${startDate.toLocaleString()})`);
 
     // Use timestamp-based slots (milliseconds) for precise matching
     // This avoids timezone string parsing issues
@@ -267,7 +267,7 @@ async function fetchSalesFromOrders(
           slotData.set(hourTs, (slotData.get(hourTs) || 0) + amount);
         } else {
           // Order falls outside our slots - might be before startDate
-          console.log(`[InsightOps] Order at ${orderDate.toISOString()} outside slots`);
+          console.log(`[StoreGuard] Order at ${orderDate.toISOString()} outside slots`);
         }
       }
     } else {
@@ -303,11 +303,11 @@ async function fetchSalesFromOrders(
       }));
 
     const totalSales = salesData.reduce((sum, d) => sum + d.sales, 0);
-    console.log(`[InsightOps] Created ${salesData.length} time slots, total sales: $${totalSales.toFixed(2)}`);
+    console.log(`[StoreGuard] Created ${salesData.length} time slots, total sales: $${totalSales.toFixed(2)}`);
 
     return { salesData, usedAnalytics: false };
   } catch (error) {
-    console.error("[InsightOps] Order fetch failed:", error);
+    console.error("[StoreGuard] Order fetch failed:", error);
     return { salesData: generateEmptyData(range, now), usedAnalytics: false };
   }
 }

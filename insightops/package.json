@@ -1,5 +1,5 @@
 {
-  "name": "insightops",
+  "name": "storeguard",
   "private": true,
   "scripts": {
     "build": "react-router build",

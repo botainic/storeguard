@@ -1,8 +1,8 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "b16ab6b74eeb284a43cc802ae452b481"
-name = "InsightOps"
-application_url = "https://insightops-app.fly.dev"
+name = "StoreGuard"
+application_url = "https://storeguard-app.fly.dev"
 embedded = true
 
 [build]
@@ -51,6 +51,10 @@ api_version = "2025-10"
   topics = [ "orders/paid" ]
   uri = "/webhooks/orders/paid"
 
+  [[webhooks.subscriptions]]
+  topics = [ "themes/publish" ]
+  uri = "/webhooks/themes/publish"
+
   # Mandatory GDPR compliance webhooks (single endpoint for all three)
   [[webhooks.subscriptions]]
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
@@ -61,4 +65,4 @@ api_version = "2025-10"
 scopes = "read_products,write_products,read_orders,read_inventory,read_reports"
 
 [auth]
-redirect_urls = [ "https://insightops-app.fly.dev/auth/callback" ]
+redirect_urls = [ "https://storeguard-app.fly.dev/auth/callback" ]
