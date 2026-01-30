@@ -145,10 +145,10 @@ model ProductSnapshot {
 
 ## Implementation Plan (GitHub Issues Order)
 
-### Milestone 0: Project & Environment Setup
+### Milestone 0: Project & Environment Setup ✅
 - [x] Existing Shopify app scaffold (done in InsightOps)
-- [ ] **ISSUE #1**: Rebrand to StoreGuard (app name, config, UI)
-- [ ] **ISSUE #2**: Database schema migration (new models)
+- [x] **ISSUE #1**: Rebrand to StoreGuard (app name, config, UI) - commit `0685820`
+- [x] **ISSUE #2**: Database schema migration (new models) - commit `0685820`
 
 ### Milestone 1: Shopify Auth & Webhooks
 - [x] OAuth flow (existing)
@@ -362,12 +362,21 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
 - [x] Initial InsightOps codebase reviewed
 - [x] Architecture decision made (leverage existing)
 - [x] claude.md created
+- [x] GitHub repository renamed to storeguard
+- [x] **Milestone 0 complete** - Rebrand + schema migration (commit `0685820`)
+  - Rebranded all files from InsightOps to StoreGuard
+  - Added Shop, ChangeEvent, ProductSnapshot models
+  - Added themes/publish webhook handler
+  - Updated all console log prefixes
 
 ### In Progress
-- [ ] Awaiting user approval to begin implementation
+- [ ] Milestone 1: Shop persistence on install
 
 ### Blocked
 - None
+
+### Known Issues (Pre-existing)
+- Type errors in `productSales.server.ts` and `api.product-impact.tsx` (will be fixed when analytics code is removed)
 
 ---
 

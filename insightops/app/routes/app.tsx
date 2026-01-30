@@ -5,12 +5,16 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
 import { syncProducts, needsProductSync } from "../services/productSync.server";
+import { getOrCreateShop } from "../services/shopService.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const url = new URL(request.url);
   const resync = url.searchParams.get("resync") === "1" || url.searchParams.get("resync") === "true";
   const host = url.searchParams.get("host");
+
+  // Ensure Shop record exists (creates on first install, clears uninstalledAt on reinstall)
+  const shopSettings = await getOrCreateShop(session.shop);
 
   // Sync products on first access (for baseline snapshots and delete name resolution)
   // Run in background so we don't block the UI - user can start using app immediately
@@ -26,7 +30,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   // eslint-disable-next-line no-undef
-  return { apiKey: process.env.SHOPIFY_API_KEY || "", host, shop: session.shop };
+  return { apiKey: process.env.SHOPIFY_API_KEY || "", host, shop: session.shop, shopSettings };
 };
 
 export default function App() {
