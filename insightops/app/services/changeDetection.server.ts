@@ -1,0 +1,458 @@
+import db from "../db.server";
+import { canTrackFeature } from "./shopService.server";
+
+/**
+ * Change Detection Service for StoreGuard
+ *
+ * Detects and records changes that matter to merchants:
+ * - Price changes
+ * - Visibility changes (status: active/draft/archived)
+ * - Inventory hitting zero
+ * - Theme publishes
+ */
+
+// Variant info stored in ProductSnapshot
+interface VariantSnapshot {
+  id: string;
+  title: string;
+  price: string;
+  inventoryQuantity: number;
+}
+
+// Product data from webhook
+interface ProductPayload {
+  id: number;
+  title: string;
+  status: string;
+  variants: Array<{
+    id: number;
+    title: string;
+    price: string;
+    inventory_quantity: number;
+  }>;
+}
+
+// Inventory update payload
+interface InventoryPayload {
+  inventory_item_id: number;
+  location_id: number;
+  available: number;
+}
+
+// Theme payload
+interface ThemePayload {
+  id: number;
+  name: string;
+  role: string;
+}
+
+/**
+ * Get or create a ProductSnapshot for comparison
+ */
+async function getProductSnapshot(shop: string, productId: string): Promise<{
+  title: string;
+  status: string;
+  variants: VariantSnapshot[];
+} | null> {
+  const snapshot = await db.productSnapshot.findUnique({
+    where: { shop_id: { shop, id: productId } },
+  });
+
+  if (!snapshot) return null;
+
+  try {
+    const variants = JSON.parse(snapshot.variants) as VariantSnapshot[];
+    return {
+      title: snapshot.title,
+      status: snapshot.status,
+      variants,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Update the ProductSnapshot after processing
+ */
+async function updateProductSnapshot(
+  shop: string,
+  productId: string,
+  data: { title: string; status: string; variants: VariantSnapshot[] }
+): Promise<void> {
+  await db.productSnapshot.upsert({
+    where: { shop_id: { shop, id: productId } },
+    create: {
+      id: productId,
+      shop,
+      title: data.title,
+      status: data.status,
+      variants: JSON.stringify(data.variants),
+    },
+    update: {
+      title: data.title,
+      status: data.status,
+      variants: JSON.stringify(data.variants),
+    },
+  });
+}
+
+/**
+ * Create a ChangeEvent record
+ */
+async function createChangeEvent(data: {
+  shop: string;
+  entityType: "product" | "variant" | "theme";
+  entityId: string;
+  eventType: "price_change" | "visibility_change" | "inventory_zero" | "theme_publish";
+  resourceName: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+  webhookId: string;
+  source?: "webhook" | "sync_job" | "manual";
+  importance?: "high" | "medium" | "low";
+  groupId?: string;
+}): Promise<void> {
+  try {
+    await db.changeEvent.create({
+      data: {
+        shop: data.shop,
+        entityType: data.entityType,
+        entityId: data.entityId,
+        eventType: data.eventType,
+        resourceName: data.resourceName,
+        beforeValue: data.beforeValue,
+        afterValue: data.afterValue,
+        webhookId: data.webhookId,
+        source: data.source ?? "webhook",
+        importance: data.importance ?? "medium",
+        groupId: data.groupId,
+      },
+    });
+    console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
+  } catch (error: unknown) {
+    // Handle duplicate webhookId (already processed)
+    if (error instanceof Error && error.message.includes("Unique constraint")) {
+      console.log(`[StoreGuard] Duplicate event for webhookId ${data.webhookId}, skipping`);
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Detect price changes between old and new product state
+ * Returns array of price changes (one per variant that changed)
+ */
+export async function detectPriceChanges(
+  shop: string,
+  product: ProductPayload,
+  webhookId: string
+): Promise<number> {
+  // Check if shop wants to track prices
+  if (!await canTrackFeature(shop, "prices")) {
+    return 0;
+  }
+
+  const productId = String(product.id);
+  const oldSnapshot = await getProductSnapshot(shop, productId);
+
+  if (!oldSnapshot) {
+    // First time seeing this product - create snapshot, no alerts
+    await updateProductSnapshot(shop, productId, {
+      title: product.title,
+      status: product.status,
+      variants: product.variants.map(v => ({
+        id: String(v.id),
+        title: v.title,
+        price: v.price,
+        inventoryQuantity: v.inventory_quantity,
+      })),
+    });
+    return 0;
+  }
+
+  let changesDetected = 0;
+
+  // Compare each variant's price - only alert when price_before !== price_after
+  for (const newVariant of product.variants) {
+    const oldVariant = oldSnapshot.variants.find(v => v.id === String(newVariant.id));
+
+    // Explicit rule: only fire when price actually changed
+    if (oldVariant && oldVariant.price !== newVariant.price) {
+      const variantLabel = newVariant.title === "Default Title"
+        ? product.title
+        : `${product.title} - ${newVariant.title}`;
+
+      // Determine importance based on change magnitude
+      const oldPrice = parseFloat(oldVariant.price) || 0;
+      const newPrice = parseFloat(newVariant.price) || 0;
+      const changePercent = oldPrice > 0 ? Math.abs(newPrice - oldPrice) / oldPrice * 100 : 100;
+      const importance = changePercent >= 50 ? "high" : changePercent >= 20 ? "medium" : "low";
+
+      await createChangeEvent({
+        shop,
+        entityType: "variant",
+        entityId: String(newVariant.id),
+        eventType: "price_change",
+        resourceName: variantLabel,
+        beforeValue: `$${oldVariant.price}`,
+        afterValue: `$${newVariant.price}`,
+        webhookId: `${webhookId}-price-${newVariant.id}`,
+        importance: importance as "high" | "medium" | "low",
+      });
+      changesDetected++;
+    }
+  }
+
+  // Update snapshot with new state
+  await updateProductSnapshot(shop, productId, {
+    title: product.title,
+    status: product.status,
+    variants: product.variants.map(v => ({
+      id: String(v.id),
+      title: v.title,
+      price: v.price,
+      inventoryQuantity: v.inventory_quantity,
+    })),
+  });
+
+  return changesDetected;
+}
+
+/**
+ * Detect visibility/status changes (active <-> draft <-> archived)
+ */
+export async function detectVisibilityChanges(
+  shop: string,
+  product: ProductPayload,
+  webhookId: string
+): Promise<boolean> {
+  // Check if shop wants to track visibility
+  if (!await canTrackFeature(shop, "visibility")) {
+    return false;
+  }
+
+  const productId = String(product.id);
+  const oldSnapshot = await getProductSnapshot(shop, productId);
+
+  if (!oldSnapshot) {
+    // First time - snapshot already created by detectPriceChanges or create here
+    await updateProductSnapshot(shop, productId, {
+      title: product.title,
+      status: product.status,
+      variants: product.variants.map(v => ({
+        id: String(v.id),
+        title: v.title,
+        price: v.price,
+        inventoryQuantity: v.inventory_quantity,
+      })),
+    });
+    return false;
+  }
+
+  // Explicit visibility change rules:
+  // - active → draft (hidden from store)
+  // - active → archived (hidden from store)
+  // - draft → active (visible on store)
+  // - archived → active (visible on store)
+  // Note: We don't care about draft ↔ archived (both are hidden anyway)
+  const significantTransitions = [
+    ["active", "draft"],
+    ["active", "archived"],
+    ["draft", "active"],
+    ["archived", "active"],
+  ];
+
+  const isSignificant = significantTransitions.some(
+    ([from, to]) => oldSnapshot.status === from && product.status === to
+  );
+
+  if (oldSnapshot.status !== product.status && isSignificant) {
+    // Determine importance: going hidden = high, going visible = medium
+    const goingHidden = product.status === "draft" || product.status === "archived";
+    const importance = goingHidden ? "high" : "medium";
+
+    await createChangeEvent({
+      shop,
+      entityType: "product",
+      entityId: productId,
+      eventType: "visibility_change",
+      resourceName: product.title,
+      beforeValue: oldSnapshot.status,
+      afterValue: product.status,
+      webhookId: `${webhookId}-status`,
+      importance,
+    });
+
+    // Update snapshot
+    await updateProductSnapshot(shop, productId, {
+      title: product.title,
+      status: product.status,
+      variants: product.variants.map(v => ({
+        id: String(v.id),
+        title: v.title,
+        price: v.price,
+        inventoryQuantity: v.inventory_quantity,
+      })),
+    });
+
+    return true;
+  }
+
+  // Update snapshot even if no significant change (status may have changed draft↔archived)
+  if (oldSnapshot.status !== product.status) {
+    await updateProductSnapshot(shop, productId, {
+      title: product.title,
+      status: product.status,
+      variants: product.variants.map(v => ({
+        id: String(v.id),
+        title: v.title,
+        price: v.price,
+        inventoryQuantity: v.inventory_quantity,
+      })),
+    });
+  }
+
+  return false;
+}
+
+/**
+ * Detect inventory hitting zero
+ * Explicit rule: Only triggers on transition >0 → 0
+ * Does NOT trigger on: 0 → 0, negative → 0, or any other scenario
+ */
+export async function detectInventoryZero(
+  shop: string,
+  inventoryItemId: string,
+  productId: string,
+  productTitle: string,
+  variantTitle: string,
+  newQuantity: number,
+  previousQuantity: number | null, // Must be provided from webhook processing
+  webhookId: string
+): Promise<boolean> {
+  // Check if shop wants to track inventory
+  if (!await canTrackFeature(shop, "inventory")) {
+    return false;
+  }
+
+  // Explicit rule: Only alert on transition from >0 to exactly 0
+  // Ignore: 0 → 0 (no change), negative → 0 (weird edge case), null → 0 (unknown previous)
+  if (newQuantity !== 0) {
+    return false; // Not hitting zero
+  }
+
+  if (previousQuantity === null || previousQuantity === undefined) {
+    console.log(`[StoreGuard] No previous inventory for ${productTitle}, can't detect >0→0`);
+    return false;
+  }
+
+  if (previousQuantity <= 0) {
+    console.log(`[StoreGuard] Previous inventory was ${previousQuantity} for ${productTitle}, not a >0→0 transition`);
+    return false; // Was already at zero or negative
+  }
+
+  // Valid >0 → 0 transition detected!
+
+  // Prevent duplicate alerts by checking recent events for this specific variant
+  const recentAlert = await db.changeEvent.findFirst({
+    where: {
+      shop,
+      eventType: "inventory_zero",
+      entityId: inventoryItemId, // Use inventory item ID for variant-level dedup
+      detectedAt: {
+        gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+      },
+    },
+  });
+
+  if (recentAlert) {
+    console.log(`[StoreGuard] Already alerted for ${productTitle} inventory zero in last 24h`);
+    return false;
+  }
+
+  const displayName = variantTitle && variantTitle !== "Default Title"
+    ? `${productTitle} - ${variantTitle}`
+    : productTitle;
+
+  await createChangeEvent({
+    shop,
+    entityType: "variant",
+    entityId: inventoryItemId,
+    eventType: "inventory_zero",
+    resourceName: displayName,
+    beforeValue: String(previousQuantity),
+    afterValue: "0",
+    webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
+    importance: "high", // Out of stock is always high importance
+  });
+
+  return true;
+}
+
+/**
+ * Record a theme publish event
+ * Explicit rule: Only trigger when role === "main" (became the live theme)
+ * The themes/publish webhook fires when a theme becomes the live theme
+ */
+export async function recordThemePublish(
+  shop: string,
+  theme: ThemePayload,
+  webhookId: string
+): Promise<boolean> {
+  // Check if shop wants to track themes (Pro only)
+  if (!await canTrackFeature(shop, "themes")) {
+    console.log(`[StoreGuard] Theme tracking disabled for ${shop} (Free plan or disabled)`);
+    return false;
+  }
+
+  // Explicit rule: Only alert when this theme became the live theme
+  // The themes/publish webhook only fires when theme becomes live, but let's be explicit
+  if (theme.role !== "main") {
+    console.log(`[StoreGuard] Theme "${theme.name}" role is ${theme.role}, not main - skipping`);
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "theme",
+    entityId: String(theme.id),
+    eventType: "theme_publish",
+    resourceName: theme.name,
+    beforeValue: null, // We don't know what theme was live before
+    afterValue: "main",
+    webhookId: `${webhookId}-theme`,
+    importance: "high", // Theme publish is always important
+  });
+
+  return true;
+}
+
+/**
+ * Process a product update and detect all relevant changes
+ * This is the main entry point called from jobProcessor
+ */
+export async function processProductChanges(
+  shop: string,
+  product: ProductPayload,
+  webhookId: string
+): Promise<{ priceChanges: number; statusChange: boolean }> {
+  const priceChanges = await detectPriceChanges(shop, product, webhookId);
+  const statusChange = await detectVisibilityChanges(shop, product, webhookId);
+
+  return { priceChanges, statusChange };
+}
+
+/**
+ * Delete ProductSnapshot when product is deleted
+ */
+export async function deleteProductSnapshot(shop: string, productId: string): Promise<void> {
+  try {
+    await db.productSnapshot.delete({
+      where: { shop_id: { shop, id: productId } },
+    });
+  } catch {
+    // Snapshot may not exist
+  }
+}

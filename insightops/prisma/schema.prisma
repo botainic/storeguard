@@ -49,19 +49,24 @@ model Shop {
 model ChangeEvent {
   id           String    @id @default(uuid())
   shop         String    // Store URL
-  eventType    String    // "price_change" | "status_change" | "inventory_zero" | "theme_publish"
-  resourceId   String    // Product/Theme ID
-  resourceName String    // Product/Theme title for display
+  entityType   String    // "product" | "variant" | "theme"
+  entityId     String    // Shopify ID of the entity
+  eventType    String    // "price_change" | "visibility_change" | "inventory_zero" | "theme_publish"
+  resourceName String    // Product/Theme title for display (human-readable)
   beforeValue  String?   // Previous value (JSON or simple string)
   afterValue   String?   // New value (JSON or simple string)
   detectedAt   DateTime  @default(now())
   digestedAt   DateTime? // When included in daily digest (null = not yet sent)
+  source       String    @default("webhook") // "webhook" | "sync_job" | "manual"
+  importance   String    @default("medium") // "high" | "medium" | "low"
+  groupId      String?   // For grouping related changes (e.g. bulk edit session)
   webhookId    String    @unique // Deduplication
 
   @@index([shop])
   @@index([shop, detectedAt])
   @@index([shop, eventType])
   @@index([digestedAt])
+  @@index([shop, entityType, entityId])
 }
 
 // Product state snapshot for change detection

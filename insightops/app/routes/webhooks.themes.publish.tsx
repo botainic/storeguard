@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { recordThemePublish } from "../services/changeDetection.server";
 
 interface ThemePayload {
   id: number;
@@ -27,40 +27,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response();
   }
 
-  // Check for duplicate
-  if (webhookId) {
-    const existing = await db.eventLog.findFirst({
-      where: { webhookId },
-    });
-    if (existing) {
-      console.log(`[StoreGuard] Duplicate webhook ${webhookId}, skipping`);
-      return new Response();
-    }
+  if (!webhookId) {
+    console.log(`[StoreGuard] No webhookId, skipping`);
+    return new Response();
   }
 
   const theme = payload as ThemePayload;
 
-  // Only log when a theme becomes the main (published) theme
-  // The themes/publish webhook fires when a theme is published to the live store
-  const message = `Theme published: "${theme.name}"`;
+  // Record theme publish event (checks if Pro plan and theme tracking enabled)
+  const recorded = await recordThemePublish(shop, theme, webhookId);
 
-  await db.eventLog.create({
-    data: {
-      shop,
-      shopifyId: String(theme.id),
-      topic: "themes/publish",
-      author: "System/App",
-      message,
-      diff: JSON.stringify({
-        themeId: theme.id,
-        themeName: theme.name,
-        role: theme.role,
-      }),
-      webhookId,
-    },
-  });
-
-  console.log(`[StoreGuard] ✅ Logged: ${message}`);
+  if (recorded) {
+    console.log(`[StoreGuard] ✅ Theme publish alert created for "${theme.name}"`);
+  }
 
   return new Response();
 };

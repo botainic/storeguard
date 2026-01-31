@@ -95,7 +95,6 @@ model ShopSync {
 model Shop {
   id               String   @id @default(uuid())
   shopifyDomain    String   @unique
-  accessToken      String   // Encrypted
   plan             String   @default("free") // "free" | "pro"
   alertEmail       String?
   trackPrices      Boolean  @default(true)
@@ -107,21 +106,26 @@ model Shop {
 }
 
 model ChangeEvent {
-  id          String   @id @default(uuid())
-  shop        String
-  eventType   String   // "price_change" | "status_change" | "inventory_zero" | "theme_publish"
-  resourceId  String   // Product/Theme ID
-  resourceName String  // Product/Theme title
-  beforeValue String?  // JSON or simple value
-  afterValue  String?  // JSON or simple value
-  detectedAt  DateTime @default(now())
-  digestedAt  DateTime? // When included in daily digest
-  webhookId   String   @unique // Deduplication
+  id           String   @id @default(uuid())
+  shop         String
+  entityType   String   // "product" | "variant" | "theme"
+  entityId     String   // Shopify ID of the entity
+  eventType    String   // "price_change" | "visibility_change" | "inventory_zero" | "theme_publish"
+  resourceName String   // Human-readable name for display
+  beforeValue  String?  // Previous value
+  afterValue   String?  // New value
+  detectedAt   DateTime @default(now())
+  digestedAt   DateTime? // When included in daily digest
+  source       String   @default("webhook") // "webhook" | "sync_job" | "manual"
+  importance   String   @default("medium") // "high" | "medium" | "low"
+  groupId      String?  // For grouping related changes (bulk edits)
+  webhookId    String   @unique // Deduplication
 
   @@index([shop])
   @@index([shop, detectedAt])
   @@index([shop, eventType])
   @@index([digestedAt])
+  @@index([shop, entityType, entityId])
 }
 
 model ProductSnapshot {
@@ -129,7 +133,7 @@ model ProductSnapshot {
   shop        String
   title       String
   status      String   // "active" | "draft" | "archived"
-  variants    String   // JSON: [{id, title, price, inventory}]
+  variants    String   // JSON: [{id, title, price, inventoryQuantity}]
   updatedAt   DateTime @updatedAt
 
   @@unique([shop, id])
@@ -143,6 +147,57 @@ model ProductSnapshot {
 
 ---
 
+## Change Detection Rules (Explicit)
+
+### Price Change Detection (ISSUE #6)
+- **Rule**: `price_before !== price_after`
+- **Granularity**: One event per variant that changed
+- **Entity**: `variant`
+- **Importance**: Based on change magnitude (>=50% = high, >=20% = medium, <20% = low)
+- **Ignore**: No-op updates where Shopify sends same price
+
+### Visibility Change Detection (ISSUE #7)
+- **Rule**: Specific status transitions only
+- **Tracked Transitions**:
+  - `active -> draft` (hidden from store) - HIGH importance
+  - `active -> archived` (hidden from store) - HIGH importance
+  - `draft -> active` (visible on store) - MEDIUM importance
+  - `archived -> active` (visible on store) - MEDIUM importance
+- **Ignored**: `draft <-> archived` (both hidden, not meaningful)
+- **Entity**: `product`
+
+### Inventory Zero Detection (ISSUE #8)
+- **Rule**: Only trigger on transition `>0 -> 0`
+- **Ignore**:
+  - `0 -> 0` (no change)
+  - `negative -> 0` (edge case)
+  - `null -> 0` (unknown previous state)
+- **Entity**: `variant` (uses inventory_item_id)
+- **Importance**: Always `high`
+- **Dedup**: 24-hour window per variant to prevent spam
+
+### Theme Publish Detection (ISSUE #9)
+- **Rule**: Only when `theme.role === "main"` (became live theme)
+- **Entity**: `theme`
+- **Importance**: Always `high`
+- **Note**: themes/publish webhook only fires on publish, but we explicitly check role
+
+---
+
+## Sanity Checklist
+
+- [x] We know **what changed** (eventType)
+- [x] We know **what entity** (entityType: product/variant/theme)
+- [x] We know **which entity** (entityId)
+- [x] We know **where** (resourceName for human display)
+- [x] We know **when** (detectedAt)
+- [x] We can show **before/after** in human-readable way
+- [x] We log in a way that's **easy to query** (per shop, indexed)
+- [x] We have **importance** for future prioritization
+- [x] We have **groupId** for bulk edit correlation
+
+---
+
 ## Implementation Plan (GitHub Issues Order)
 
 ### Milestone 0: Project & Environment Setup ✅
@@ -150,35 +205,35 @@ model ProductSnapshot {
 - [x] **ISSUE #1**: Rebrand to StoreGuard (app name, config, UI) - commit `0685820`
 - [x] **ISSUE #2**: Database schema migration (new models) - commit `0685820`
 
-### Milestone 1: Shopify Auth & Webhooks
+### Milestone 1: Shopify Auth & Webhooks ✅
 - [x] OAuth flow (existing)
-- [ ] **ISSUE #3**: Shop model persistence on install
-- [ ] **ISSUE #4**: Register `themes/publish` webhook
+- [x] **ISSUE #3**: Shop model persistence on install - commit `bdaa3cb`
+- [x] **ISSUE #4**: Register `themes/publish` webhook - commit `0685820`
 
-### Milestone 2: State Snapshot Engine
-- [x] Product snapshot storage (existing, needs migration)
-- [ ] **ISSUE #5**: Migrate ProductSnapshot model
+### Milestone 2: State Snapshot Engine ✅
+- [x] Product snapshot storage
+- [x] **ISSUE #5**: Migrate ProductSnapshot model
 
-### Milestone 3: Change Detection (Core Value)
-- [ ] **ISSUE #6**: Price change detection
-- [ ] **ISSUE #7**: Product visibility change detection
-- [ ] **ISSUE #8**: Inventory zero detection
-- [ ] **ISSUE #9**: Theme publish detection
+### Milestone 3: Change Detection (Core Value) ✅
+- [x] **ISSUE #6**: Price change detection (per-variant, importance scoring)
+- [x] **ISSUE #7**: Product visibility change detection (significant transitions only)
+- [x] **ISSUE #8**: Inventory zero detection (>0 -> 0 rule)
+- [x] **ISSUE #9**: Theme publish detection (role === "main" only)
+- [x] **ISSUE #10**: Recent Changes page (debug UI at /app/changes)
 
 ### Milestone 4: Settings & Controls
-- [ ] **ISSUE #10**: Settings page (Polaris UI)
-- [ ] **ISSUE #11**: Free vs Pro feature gates
+- [ ] **ISSUE #11**: Settings page (Polaris UI)
+- [ ] **ISSUE #12**: Free vs Pro feature gates
 
 ### Milestone 5: Daily Digest (The Product)
-- [ ] **ISSUE #12**: Daily digest generator
-- [ ] **ISSUE #13**: Email template (HTML)
-- [ ] **ISSUE #14**: Daily cron job
+- [ ] **ISSUE #13**: Daily digest generator
+- [ ] **ISSUE #14**: Email template (HTML)
+- [ ] **ISSUE #15**: Daily cron job
 
 ### Milestone 6: Billing & Monetization
-- [ ] **ISSUE #15**: Stripe subscription integration ($19/month)
+- [ ] **ISSUE #16**: Stripe subscription integration ($19/month)
 
 ### Milestone 7: Polish & Launch
-- [ ] **ISSUE #16**: Recent alerts list (UI)
 - [ ] **ISSUE #17**: App uninstall cleanup
 - [ ] **ISSUE #18**: App Store submission prep
 
@@ -368,9 +423,27 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
   - Added Shop, ChangeEvent, ProductSnapshot models
   - Added themes/publish webhook handler
   - Updated all console log prefixes
+- [x] **Milestone 1 complete** - Shop persistence (commit `bdaa3cb`)
+  - Created shopService.server.ts with getOrCreateShop
+  - Shop record created on first app access
+  - Uninstall webhook marks shop as uninstalled
+- [x] **Milestones 2-3 complete** - Change Detection (core value)
+  - Created changeDetection.server.ts with all detection functions
+  - Integrated detection into jobProcessor.server.ts
+  - Enhanced ChangeEvent model with entityType, source, importance, groupId
+  - Explicit detection rules documented and implemented
+  - Created Recent Changes debug page at /app/changes
+  - Files changed:
+    - `prisma/schema.prisma` - Enhanced ChangeEvent model
+    - `app/services/changeDetection.server.ts` - Core detection logic
+    - `app/services/jobProcessor.server.ts` - Integration
+    - `app/services/shopService.server.ts` - Feature gates
+    - `app/routes/webhooks.themes.publish.tsx` - Theme detection
+    - `app/routes/app.changes.tsx` - Debug UI
+    - `app/routes/app.tsx` - Nav link to Changes
 
 ### In Progress
-- [ ] Milestone 1: Shop persistence on install
+- [ ] Milestone 4: Settings page
 
 ### Blocked
 - None

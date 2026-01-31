@@ -6,6 +6,11 @@ import {
   markJobCompleted,
   markJobFailed,
 } from "./jobQueue.server";
+import {
+  processProductChanges,
+  detectInventoryZero,
+  deleteProductSnapshot,
+} from "./changeDetection.server";
 
 // Full product payload from Shopify webhook
 interface ProductPayload {
@@ -306,6 +311,16 @@ async function processProductUpdate(
   payload: ProductPayload,
   webhookId: string | null
 ): Promise<void> {
+  // === StoreGuard Change Detection ===
+  // Detect price and visibility changes, create ChangeEvent records
+  if (webhookId) {
+    const { priceChanges, statusChange } = await processProductChanges(shop, payload, webhookId);
+    if (priceChanges > 0 || statusChange) {
+      console.log(`[StoreGuard] Detected ${priceChanges} price changes, status change: ${statusChange}`);
+    }
+  }
+
+  // === Legacy EventLog (for activity timeline) ===
   // Create new snapshot
   const newSnapshot = createProductSnapshot(payload);
 
@@ -458,6 +473,9 @@ async function processProductDelete(
       where: { shop_id: { shop, id: productId } },
     });
   }
+
+  // === StoreGuard: Clean up snapshot for deleted product ===
+  await deleteProductSnapshot(shop, productId);
 
   // Fallback to previous events
   if (!productTitle) {
@@ -645,7 +663,7 @@ async function processInventoryUpdate(
     }
   }
 
-  // Get previous inventory level for diff display
+  // Get previous inventory level for diff display AND for >0→0 detection
   let oldAvailable: number | null = null;
   try {
     const previousEvent = await db.eventLog.findFirst({
@@ -663,6 +681,21 @@ async function processInventoryUpdate(
     }
   } catch (prevError) {
     console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
+  }
+
+  // === StoreGuard: Detect inventory hitting zero ===
+  // Rule: Only triggers on >0 → 0 transition
+  if (productId && webhookId && payload.available === 0) {
+    await detectInventoryZero(
+      shop,
+      String(payload.inventory_item_id),
+      productId,
+      productTitle,
+      variantTitle,
+      payload.available,
+      oldAvailable, // Pass previous quantity for >0→0 check
+      webhookId
+    );
   }
 
   const displayName =
