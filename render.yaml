@@ -1,6 +1,6 @@
 databases:
   - name: storeguard-db
-    plan: starter # $7/month, 1GB storage
+    plan: basic # New plan name
     databaseName: storeguard
     user: storeguard
 
@@ -8,7 +8,7 @@ services:
   - type: web
     name: storeguard-app
     runtime: docker
-    plan: starter # $7/month
+    plan: starter
     rootDir: insightops
     healthCheckPath: /
     envVars:
