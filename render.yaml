@@ -9,6 +9,7 @@ services:
     name: storeguard-app
     runtime: docker
     plan: starter # $7/month
+    rootDir: insightops
     healthCheckPath: /
     envVars:
       - key: NODE_ENV
