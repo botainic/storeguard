@@ -131,6 +131,7 @@ export async function getSyncStatus(shop: string): Promise<{
  * This ensures we have:
  * 1. Product names available for delete events
  * 2. Baseline snapshots so the first update shows what changed
+ * 3. ProductSnapshot records for StoreGuard change detection
  * Uses cursor-based pagination to handle stores with many products.
  */
 export async function syncProducts(
@@ -239,7 +240,32 @@ export async function syncProducts(
           },
         });
 
-        // Ensure we have a baseline snapshot for this product.
+        // === StoreGuard: Create ProductSnapshot for change detection ===
+        // This is what changeDetection.server.ts uses to compare before/after
+        const productSnapshotVariants = product.variants.edges.map((v) => ({
+          id: v.node.id.split("/").pop() || v.node.id,
+          title: v.node.title,
+          price: v.node.price,
+          inventoryQuantity: v.node.inventoryQuantity ?? 0,
+        }));
+
+        await db.productSnapshot.upsert({
+          where: { shop_id: { shop, id: numericId } },
+          create: {
+            id: numericId,
+            shop,
+            title: product.title,
+            status: product.status.toLowerCase(),
+            variants: JSON.stringify(productSnapshotVariants),
+          },
+          update: {
+            title: product.title,
+            status: product.status.toLowerCase(),
+            variants: JSON.stringify(productSnapshotVariants),
+          },
+        });
+
+        // Ensure we have a baseline snapshot for this product (legacy EventLog).
         // IMPORTANT: ProductCache can exist from webhooks, but that doesn't mean a baseline snapshot exists.
         // Only `products/snapshot` events count as baselines.
         const existingBaseline = await db.eventLog.findFirst({
@@ -339,21 +365,35 @@ export async function syncProducts(
 }
 
 /**
- * Check if we need to sync products (no cache exists for this shop)
+ * Check if we need to sync products (no snapshots exist for this shop)
  */
 export async function needsProductSync(shop: string): Promise<boolean> {
-  // Prefer explicit sync state when available.
   const syncRecord = await db.shopSync.findUnique({ where: { shop } });
+  const snapshotCount = await db.productSnapshot.count({ where: { shop } });
+  const cacheCount = await db.productCache.count({ where: { shop } });
+  const baselineCount = await db.eventLog.count({ where: { shop, topic: "products/snapshot" } });
+  const expectedCount = Math.max(syncRecord?.syncedProducts ?? 0, cacheCount, baselineCount);
+
   if (syncRecord) {
-    if (syncRecord.status === "completed") return false;
+    if (syncRecord.status === "completed") {
+      if (expectedCount > 0 && snapshotCount < expectedCount) {
+        console.log(
+          `[StoreGuard] Sync completed but ProductSnapshots incomplete (${snapshotCount}/${expectedCount}) - triggering resync for ${shop}`
+        );
+        return true;
+      }
+      if (snapshotCount === 0) {
+        console.log(`[StoreGuard] Sync completed but no ProductSnapshots - triggering resync for ${shop}`);
+        return true;
+      }
+      return false;
+    }
     if (syncRecord.status === "syncing") return false; // already running
     // failed / pending => allow retry
     return true;
   }
 
-  // No ShopSync record: determine whether baseline snapshots exist.
-  const baselineCount = await db.eventLog.count({
-    where: { shop, topic: "products/snapshot" },
-  });
-  return baselineCount === 0;
+  if (snapshotCount === 0) return true;
+  if (expectedCount > 0 && snapshotCount < expectedCount) return true;
+  return false;
 }

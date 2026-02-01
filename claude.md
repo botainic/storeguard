@@ -65,7 +65,7 @@ StoreGuard watches for these changes and sends a daily digest email.
 | **Icons** | Lucide React | 0.556 | Lightweight icon set |
 | **Testing** | Vitest | 4.0 | Unit + integration |
 | **Shopify API** | Admin API | 2025-10 | Latest stable |
-| **Email** | TBD | - | Resend or Postmark recommended |
+| **Email** | Resend | - | Modern email API, great deliverability |
 
 ---
 
@@ -221,21 +221,21 @@ model ProductSnapshot {
 - [x] **ISSUE #9**: Theme publish detection (role === "main" only)
 - [x] **ISSUE #10**: Recent Changes page (debug UI at /app/changes)
 
-### Milestone 4: Settings & Controls
-- [ ] **ISSUE #11**: Settings page (Polaris UI)
-- [ ] **ISSUE #12**: Free vs Pro feature gates
+### Milestone 4: Settings & Controls ✅
+- [x] **ISSUE #11**: Settings page (Polaris UI)
+- [x] **ISSUE #12**: Free vs Pro feature gates
 
-### Milestone 5: Daily Digest (The Product)
-- [ ] **ISSUE #13**: Daily digest generator
-- [ ] **ISSUE #14**: Email template (HTML)
-- [ ] **ISSUE #15**: Daily cron job
+### Milestone 5: Daily Digest (The Product) ✅
+- [x] **ISSUE #13**: Daily digest generator
+- [x] **ISSUE #14**: Email template (HTML)
+- [x] **ISSUE #15**: Daily cron job (API endpoint)
 
-### Milestone 6: Billing & Monetization
-- [ ] **ISSUE #16**: Stripe subscription integration ($19/month)
+### Milestone 6: Billing & Monetization ✅
+- [x] **ISSUE #16**: Stripe subscription integration ($19/month)
 
-### Milestone 7: Polish & Launch
-- [ ] **ISSUE #17**: App uninstall cleanup
-- [ ] **ISSUE #18**: App Store submission prep
+### Milestone 7: Polish & Launch ✅
+- [x] **ISSUE #17**: App uninstall cleanup (cancel Stripe sub, clean jobs)
+- [x] **ISSUE #18**: App Store submission prep (config, scopes, webhooks)
 
 ---
 
@@ -351,18 +351,65 @@ const FREE_LIMITS = {
   themeTracking: false,
 };
 
-// Check in UI
-function SettingsPage() {
-  const { plan } = useShop();
-  return (
-    <Toggle
-      label="Track theme changes"
-      disabled={plan !== 'pro'}
-      helpText={plan !== 'pro' ? 'Upgrade to Pro' : undefined}
-    />
-  );
-}
+// Pro Plan Limits
+const PRO_LIMITS = {
+  maxProducts: Infinity,
+  historyDays: 90,
+  themeTracking: true,
+};
 ```
+
+---
+
+## V1 Pricing Strategy (LOCKED)
+
+> **Rule**: Do NOT debate pricing until 10+ active Pro users or explicit "I'd pay more for X" feedback.
+
+### Free Plan — $0/month
+**Purpose**: Hook + trust + installs (Trojan Horse)
+
+| Feature | Limit |
+|---------|-------|
+| Products monitored | 50 |
+| Daily digest email | ✅ |
+| Price change tracking | ✅ |
+| Visibility change tracking | ✅ |
+| Inventory zero tracking | ✅ |
+| Alert history | 7 days |
+| Theme publish alerts | ❌ |
+| Instant alerts | ❌ |
+| Slack integration | ❌ |
+
+### Pro Plan — $19/month
+**Purpose**: Early revenue + validation
+
+| Feature | Limit |
+|---------|-------|
+| Products monitored | Unlimited |
+| Daily digest email | ✅ |
+| Price change tracking | ✅ |
+| Visibility change tracking | ✅ |
+| Inventory zero tracking | ✅ |
+| Alert history | 90 days |
+| Theme publish alerts | ✅ |
+| Priority processing | ✅ |
+
+**Why $19**: Impulse-buy, no finance gate, comparable to utility apps, proves willingness to pay.
+
+### Explicitly NOT in V1
+- ❌ Instant alerts (email/Slack)
+- ❌ AI summaries
+- ❌ Sales/conversion analysis
+- ❌ Multiple pricing tiers
+- ❌ Annual plans
+
+### Future Upsell Path
+| Phase | Feature | Price |
+|-------|---------|-------|
+| V1 | Change Detection | $19 |
+| Phase 2 | AI Morning Briefing | $49 |
+| Phase 3 | Baseline Signals | $99 |
+| Phase 4 | Ops Copilot | $149+ |
 
 ### 5. Daily Digest Query
 ```typescript
@@ -396,9 +443,12 @@ SHOPIFY_API_SECRET=xxx
 # Database (existing)
 DATABASE_URL=postgresql://...
 
-# Email Service (NEW)
-RESEND_API_KEY=xxx            # or POSTMARK_API_KEY
+# Email Service
+RESEND_API_KEY=xxx
 DIGEST_FROM_EMAIL=alerts@storeguard.app
+
+# Cron/Digest Trigger
+CRON_SECRET=xxx               # Protects /api/digest endpoint
 
 # Stripe (NEW - replaces Shopify billing)
 STRIPE_SECRET_KEY=xxx
@@ -441,15 +491,64 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
     - `app/routes/webhooks.themes.publish.tsx` - Theme detection
     - `app/routes/app.changes.tsx` - Debug UI
     - `app/routes/app.tsx` - Nav link to Changes
+- [x] **Milestone 4 complete** - Settings & Controls
+  - Created app.settings.tsx with full settings UI
+  - Email input for daily digest recipient
+  - Feature toggles for price, visibility, inventory, theme tracking
+  - Pro-only badge on theme tracking with disabled state for free plan
+  - Plan enforcement via shopService.server.ts (blocks trackThemes for free)
+  - Form validation with success/error feedback
+  - Added Settings link to navigation
+  - Files changed:
+    - `app/routes/app.settings.tsx` - New settings page
+    - `app/routes/app.tsx` - Added nav link
 
-### In Progress
-- [ ] Milestone 4: Settings page
+- [x] **Milestone 5 complete** - Daily Digest (The Product)
+  - Created dailyDigest.server.ts with digest generation logic
+  - Created emailService.server.ts with Resend API integration
+  - HTML email template with grouped events by type
+  - API endpoint at /api/digest for cron trigger
+  - Authentication via CRON_SECRET header
+  - Files created:
+    - `app/services/dailyDigest.server.ts` - Digest generation
+    - `app/services/emailService.server.ts` - Email sending via Resend
+    - `app/routes/api.digest.tsx` - Cron-triggered endpoint
+
+- [x] **Milestone 6 complete** - Billing & Monetization
+  - Created stripeService.server.ts with Stripe API integration
+  - Stripe Checkout for Pro upgrade ($19/month)
+  - Customer Portal for subscription management
+  - Webhook handler at /api/stripe/webhook for subscription events
+  - Handles: checkout.session.completed, subscription created/updated/deleted
+  - App Bridge compatible with window.open for iframe escape
+  - Files created:
+    - `app/services/stripeService.server.ts` - Stripe API service
+    - `app/routes/api.billing.checkout.tsx` - Checkout/Portal session creation
+    - `app/routes/api.stripe.webhook.tsx` - Stripe webhook handler
+  - Files modified:
+    - `app/routes/app.settings.tsx` - Added billing buttons and states
+
+- [x] **Milestone 7 complete** - Polish & Launch
+  - Enhanced uninstall webhook to cancel Stripe subscriptions
+  - Clean up pending webhook jobs on uninstall
+  - Updated shopify.app.toml:
+    - App name: StoreGuard
+    - App URL: storeguard-app.fly.dev
+    - Added themes/publish webhook
+    - Cleaned up scopes (read_inventory, read_products, read_themes)
+  - Files modified:
+    - `app/routes/webhooks.app.uninstalled.tsx` - Stripe cancellation + job cleanup
+    - `app/services/stripeService.server.ts` - Added cancelShopSubscription
+    - `shopify.app.toml` - App config for submission
+
+### Completed
+- All milestones complete! 🎉
 
 ### Blocked
 - None
 
-### Known Issues (Pre-existing)
-- Type errors in `productSales.server.ts` and `api.product-impact.tsx` (will be fixed when analytics code is removed)
+### Known Issues
+- None
 
 ---
 
@@ -473,20 +572,23 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
 | Email Provider | **Resend** | 2026-01-30 |
 | Billing | **Stripe** | 2026-01-30 |
 | Digest Timezone | **UTC** (V1) | 2026-01-30 |
-| Cron Job | TBD - Railway cron or Inngest | - |
+| Cron Job | **API endpoint** (`/api/digest`) | 2026-02-01 |
 
 ---
 
-## Files to Delete (Cleanup)
+## Files Deleted (Cleanup Complete) ✅
 
-After migration complete, remove:
-- `app/services/analytics.server.ts`
-- `app/services/productSales.server.ts`
-- `app/utils/impactAnalysis.ts`
-- `app/utils/impactAnalysis.test.ts`
-- `app/routes/api.product-sales.tsx`
-- `app/routes/api.product-impact.tsx`
-- `app/routes/api.debug-sales.tsx`
+Removed on 2026-02-01:
+- ~~`app/services/analytics.server.ts`~~
+- ~~`app/services/productSales.server.ts`~~
+- ~~`app/utils/impactAnalysis.ts`~~
+- ~~`app/utils/impactAnalysis.test.ts`~~
+- ~~`app/routes/api.product-sales.tsx`~~
+- ~~`app/routes/api.product-impact.tsx`~~
+- ~~`app/routes/api.debug-sales.tsx`~~
+- Removed `ProductSalesPoint` model from schema
+
+Note: `EventLog` model still in use by jobProcessor/productSync for baseline tracking. Can be refactored later.
 
 ---
 
@@ -510,13 +612,19 @@ After migration complete, remove:
 
 ## Launch Checklist
 
-- [ ] All 18 issues completed
+- [x] All 18 issues completed (Milestones 0-7)
+- [x] Privacy policy page exists (at /privacy route)
+- [x] GDPR webhooks implemented (customers/data_request, customers/redact, shop/redact)
+- [x] Uninstall cleanup with Stripe cancellation
+- [x] App config updated (shopify.app.toml)
 - [ ] App listing copy written
-- [ ] Screenshots captured (Settings, Digest email)
-- [ ] Privacy policy page
+- [ ] Screenshots captured (Settings, Digest email, Changes page)
 - [ ] Support email configured
-- [ ] Production database provisioned
-- [ ] Email service verified
-- [ ] Stripe products created
+- [x] Stripe products created ($19/month Pro plan)
+- [ ] Production database provisioned (PostgreSQL)
+- [ ] Production environment variables configured
+- [ ] Stripe webhook URL configured in Stripe Dashboard
+- [ ] Email service verified (Resend)
+- [ ] Cron job configured for daily digest
 - [ ] App submitted to Shopify
 - [ ] Marketing site live

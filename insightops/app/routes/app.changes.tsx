@@ -1,5 +1,6 @@
-import type { LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
+import { useLoaderData, useRouteError } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
@@ -160,7 +161,7 @@ export default function RecentChanges() {
                         {event.beforeValue}
                       </span>
                     )}
-                    {event.beforeValue && event.afterValue && <span>\u2192</span>}
+                    {event.beforeValue && event.afterValue && <span>→</span>}
                     {event.afterValue && (
                       <span
                         style={{
@@ -197,3 +198,12 @@ export default function RecentChanges() {
     </div>
   );
 }
+
+// Required for Shopify to handle exit-iframe redirect via App Bridge
+export function ErrorBoundary() {
+  return boundary.error(useRouteError());
+}
+
+export const headers: HeadersFunction = (headersArgs) => {
+  return boundary.headers(headersArgs);
+};

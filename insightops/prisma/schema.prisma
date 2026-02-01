@@ -43,6 +43,9 @@ model Shop {
   trackThemes     Boolean   @default(false) // Pro only
   installedAt     DateTime  @default(now())
   uninstalledAt   DateTime?
+  // Stripe billing
+  stripeCustomerId     String?  @unique // Stripe customer ID (cus_xxx)
+  stripeSubscriptionId String?  // Active subscription ID (sub_xxx)
 }
 
 // Change events for alerting (core of StoreGuard)
@@ -140,20 +143,3 @@ model ShopSync {
   error       String?
 }
 
-// Aggregated product sales metrics (NO customer PII)
-// Stores revenue + units per product for a time bucket (hour/day).
-model ProductSalesPoint {
-  id          String   @id @default(uuid())
-  shop        String   // The store URL
-  productId   String   // Shopify product ID as string
-  bucketType  String   // "hour" | "day"
-  bucketStart DateTime // Start of bucket (UTC)
-  revenueCents Int     @default(0) // Store as cents to avoid float drift
-  units       Int     @default(0)
-  currency    String? // Optional - store currency code if available
-  updatedAt   DateTime @updatedAt
-
-  @@unique([shop, productId, bucketType, bucketStart])
-  @@index([shop, bucketType, bucketStart])
-  @@index([shop, productId, bucketType, bucketStart])
-}

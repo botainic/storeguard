@@ -2,7 +2,7 @@
 
 client_id = "b16ab6b74eeb284a43cc802ae452b481"
 name = "StoreGuard"
-application_url = "https://storeguard-app.fly.dev"
+application_url = "https://storeguard-app.onrender.com"
 embedded = true
 
 [build]
@@ -12,8 +12,40 @@ automatically_update_urls_on_dev = true
 api_version = "2025-10"
 
   [[webhooks.subscriptions]]
+  uri = "/webhooks/compliance"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+
+  [[webhooks.subscriptions]]
+  topics = [ "collections/create" ]
+  uri = "/webhooks/collections/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "products/delete" ]
+  uri = "/webhooks/products/delete"
+
+  [[webhooks.subscriptions]]
+  topics = [ "products/create" ]
+  uri = "/webhooks/products/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "inventory_levels/update" ]
+  uri = "/webhooks/inventory/update"
+
+  [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "collections/delete" ]
+  uri = "/webhooks/collections/delete"
+
+  [[webhooks.subscriptions]]
+  topics = [ "collections/update" ]
+  uri = "/webhooks/collections/update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/paid" ]
+  uri = "/webhooks/orders/paid"
 
   [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
@@ -24,45 +56,15 @@ api_version = "2025-10"
   uri = "/webhooks/products/update"
 
   [[webhooks.subscriptions]]
-  topics = [ "products/create" ]
-  uri = "/webhooks/products/create"
-
-  [[webhooks.subscriptions]]
-  topics = [ "products/delete" ]
-  uri = "/webhooks/products/delete"
-
-  [[webhooks.subscriptions]]
-  topics = [ "inventory_levels/update" ]
-  uri = "/webhooks/inventory/update"
-
-  [[webhooks.subscriptions]]
-  topics = [ "collections/create" ]
-  uri = "/webhooks/collections/create"
-
-  [[webhooks.subscriptions]]
-  topics = [ "collections/update" ]
-  uri = "/webhooks/collections/update"
-
-  [[webhooks.subscriptions]]
-  topics = [ "collections/delete" ]
-  uri = "/webhooks/collections/delete"
-
-  [[webhooks.subscriptions]]
-  topics = [ "orders/paid" ]
-  uri = "/webhooks/orders/paid"
-
-  [[webhooks.subscriptions]]
   topics = [ "themes/publish" ]
   uri = "/webhooks/themes/publish"
 
-  # Mandatory GDPR compliance webhooks (single endpoint for all three)
-  [[webhooks.subscriptions]]
-  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
-  uri = "/webhooks/compliance"
-
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_products,write_products,read_orders,read_inventory,read_reports"
+# StoreGuard scopes: products for change detection, inventory for stock alerts, themes for publish tracking
+scopes = "read_inventory,read_products,read_themes"
+optional_scopes = [ ]
+use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://storeguard-app.fly.dev/auth/callback" ]
+redirect_urls = [ "https://storeguard-app.onrender.com/auth/callback" ]
