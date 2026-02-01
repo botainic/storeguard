@@ -1,6 +1,6 @@
 databases:
   - name: storeguard-db
-    plan: basic # New plan name
+    plan: free
     databaseName: storeguard
     user: storeguard
 
