@@ -33,14 +33,17 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   const trackInventory = formData.get("trackInventory") === "on";
   const trackThemes = formData.get("trackThemes") === "on";
 
-  // Validate email if provided
+  // Validate emails (supports multiple comma-separated)
   const trimmedEmail = alertEmail?.trim() || null;
-  if (trimmedEmail && !isValidEmail(trimmedEmail)) {
-    return {
-      success: false,
-      message: "Please enter a valid email address.",
-      errors: { alertEmail: "Invalid email format" },
-    };
+  if (trimmedEmail) {
+    const { valid, invalidEmails } = validateEmails(trimmedEmail);
+    if (!valid) {
+      return {
+        success: false,
+        message: `Invalid email${invalidEmails.length > 1 ? "s" : ""}: ${invalidEmails.join(", ")}`,
+        errors: { alertEmail: "One or more email addresses are invalid" },
+      };
+    }
   }
 
   try {
@@ -61,6 +64,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function validateEmails(emailString: string): { valid: boolean; invalidEmails: string[] } {
+  if (!emailString.trim()) return { valid: true, invalidEmails: [] };
+  const emails = emailString.split(",").map(e => e.trim()).filter(e => e);
+  const invalidEmails = emails.filter(e => !isValidEmail(e));
+  return { valid: invalidEmails.length === 0, invalidEmails };
 }
 
 export default function Settings() {
@@ -141,7 +151,7 @@ export default function Settings() {
 
       <Form method="post">
         {/* Email Section */}
-        <Section title="Daily Digest Email">
+        <Section title="Daily Digest Recipients">
           <p style={{ color: "#637381", fontSize: 14, marginBottom: 12 }}>
             Receive a daily summary of all detected changes.
           </p>
@@ -150,19 +160,19 @@ export default function Settings() {
               htmlFor="alertEmail"
               style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 4 }}
             >
-              Email address
+              Email addresses
             </label>
             <input
-              type="email"
+              type="text"
               id="alertEmail"
               name="alertEmail"
               defaultValue={settings.alertEmail || ""}
-              placeholder="alerts@yourstore.com"
+              placeholder="alerts@yourstore.com, team@yourstore.com"
               style={{
                 width: "100%",
-                padding: "8px 12px",
+                padding: "10px 12px",
                 fontSize: 14,
-                border: "1px solid #c9cccf",
+                border: actionData?.errors?.alertEmail ? "1px solid #dc2626" : "1px solid #c9cccf",
                 borderRadius: 8,
                 outline: "none",
                 boxSizing: "border-box",
@@ -173,8 +183,8 @@ export default function Settings() {
                 {actionData.errors.alertEmail}
               </div>
             )}
-            <div style={{ color: "#8c9196", fontSize: 12, marginTop: 4 }}>
-              Leave empty to disable daily digest emails.
+            <div style={{ color: "#8c9196", fontSize: 12, marginTop: 6 }}>
+              Add multiple recipients separated by commas. Leave empty to disable.
             </div>
           </div>
         </Section>
@@ -276,15 +286,16 @@ export default function Settings() {
                 style={{
                   background: billingLoading ? "#93c5fd" : "#1d4ed8",
                   color: "#fff",
-                  padding: "10px 20px",
+                  padding: "12px 24px",
                   fontSize: 14,
                   fontWeight: 500,
                   border: "none",
                   borderRadius: 8,
                   cursor: billingLoading ? "not-allowed" : "pointer",
+                  width: "100%",
                 }}
               >
-                {billingLoading ? "Redirecting to checkout..." : "Upgrade to Pro — $19/month"}
+                {billingLoading ? "Redirecting..." : "Upgrade to Pro — $19/month"}
               </button>
             </>
           ) : (
@@ -299,12 +310,13 @@ export default function Settings() {
                 style={{
                   background: "#fff",
                   color: "#374151",
-                  padding: "10px 20px",
+                  padding: "12px 24px",
                   fontSize: 14,
                   fontWeight: 500,
                   border: "1px solid #d1d5db",
                   borderRadius: 8,
                   cursor: billingLoading ? "not-allowed" : "pointer",
+                  width: "100%",
                 }}
               >
                 {billingLoading ? "Redirecting..." : "Manage subscription"}
@@ -314,32 +326,37 @@ export default function Settings() {
         </Section>
 
         {/* Submit Button */}
-        <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12 }}>
           <button
             type="submit"
             disabled={isSubmitting}
             style={{
               background: isSubmitting ? "#9ca3af" : "#000",
               color: "#fff",
-              padding: "10px 20px",
+              padding: "12px 24px",
               fontSize: 14,
               fontWeight: 500,
               border: "none",
               borderRadius: 8,
               cursor: isSubmitting ? "not-allowed" : "pointer",
+              width: "100%",
             }}
           >
             {isSubmitting ? "Saving..." : "Save settings"}
           </button>
           {actionData && (
-            <span
+            <div
               style={{
+                padding: "10px 12px",
+                borderRadius: 6,
                 fontSize: 14,
+                background: actionData.success ? "#f0fdf4" : "#fef2f2",
                 color: actionData.success ? "#166534" : "#991b1b",
+                textAlign: "center",
               }}
             >
               {actionData.message}
-            </span>
+            </div>
           )}
         </div>
       </Form>
@@ -355,11 +372,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         background: "#fff",
         border: "1px solid #e1e3e5",
         borderRadius: 12,
-        padding: 20,
+        padding: "16px",
         marginBottom: 16,
       }}
     >
-      <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{title}</h2>
+      <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "#202223" }}>{title}</h2>
       {children}
     </div>
   );

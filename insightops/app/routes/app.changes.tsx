@@ -52,10 +52,10 @@ export default function RecentChanges() {
   const { events } = useLoaderData<typeof loader>();
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Recent Changes</h1>
-      <p style={{ color: "#637381", marginBottom: 24 }}>
-        Last 50 detected changes. This page is for debugging/verification.
+    <div style={{ padding: 16, fontFamily: "system-ui, sans-serif", maxWidth: 800 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 8, color: "#202223" }}>Recent Changes</h1>
+      <p style={{ color: "#637381", marginBottom: 20, fontSize: 14 }}>
+        Your store's detected changes from the last 50 events.
       </p>
 
       {events.length === 0 ? (
@@ -87,28 +87,32 @@ export default function RecentChanges() {
                 style={{
                   background: "#fff",
                   border: "1px solid #e1e3e5",
-                  borderLeft: `4px solid ${config.color}`,
+                  borderLeft: `3px solid ${config.color}`,
                   borderRadius: 8,
-                  padding: 16,
+                  padding: "12px 14px",
                 }}
               >
                 <div
                   style={{
                     display: "flex",
+                    flexWrap: "wrap",
                     justifyContent: "space-between",
-                    alignItems: "flex-start",
+                    alignItems: "center",
+                    gap: 8,
                     marginBottom: 8,
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <span
                       style={{
                         background: config.color,
                         color: "#fff",
-                        padding: "2px 8px",
+                        padding: "3px 10px",
                         borderRadius: 4,
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: 500,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.5px",
                       }}
                     >
                       {config.label}
@@ -117,22 +121,21 @@ export default function RecentChanges() {
                       style={{
                         background: "#f4f6f8",
                         color: importance.color,
-                        padding: "2px 8px",
+                        padding: "3px 8px",
                         borderRadius: 4,
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: 500,
-                        border: `1px solid ${importance.color}`,
                       }}
                     >
                       {importance.label}
                     </span>
                   </div>
-                  <span style={{ color: "#637381", fontSize: 12 }}>
-                    {detectedDate.toLocaleDateString()} {detectedDate.toLocaleTimeString()}
+                  <span style={{ color: "#8c9196", fontSize: 12 }}>
+                    {detectedDate.toLocaleDateString()}
                   </span>
                 </div>
 
-                <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 6, color: "#202223" }}>
                   {event.resourceName}
                 </div>
 
@@ -140,18 +143,18 @@ export default function RecentChanges() {
                   <div
                     style={{
                       display: "flex",
-                      gap: 8,
+                      flexWrap: "wrap",
+                      gap: 6,
                       alignItems: "center",
-                      fontSize: 14,
-                      color: "#637381",
+                      fontSize: 13,
                     }}
                   >
                     {event.beforeValue && (
                       <span
                         style={{
-                          background: "#fdf2f2",
-                          color: "#991b1b",
-                          padding: "2px 8px",
+                          background: "#fef2f2",
+                          color: "#b91c1c",
+                          padding: "4px 10px",
                           borderRadius: 4,
                           textDecoration: "line-through",
                         }}
@@ -159,13 +162,15 @@ export default function RecentChanges() {
                         {event.beforeValue}
                       </span>
                     )}
-                    {event.beforeValue && event.afterValue && <span>→</span>}
+                    {event.beforeValue && event.afterValue && (
+                      <span style={{ color: "#9ca3af" }}>→</span>
+                    )}
                     {event.afterValue && (
                       <span
                         style={{
                           background: "#f0fdf4",
-                          color: "#166534",
-                          padding: "2px 8px",
+                          color: "#15803d",
+                          padding: "4px 10px",
                           borderRadius: 4,
                         }}
                       >
