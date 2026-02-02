@@ -35,11 +35,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 // Event type display config
-const eventConfig: Record<string, { label: string; emoji: string; color: string }> = {
-  price_change: { label: "Price Change", emoji: "\uD83D\uDCB0", color: "#ffa500" },
-  visibility_change: { label: "Visibility", emoji: "\uD83D\uDC41\uFE0F", color: "#9b59b6" },
-  inventory_zero: { label: "Out of Stock", emoji: "\uD83D\uDEA8", color: "#e74c3c" },
-  theme_publish: { label: "Theme Published", emoji: "\uD83C\uDFA8", color: "#3498db" },
+const eventConfig: Record<string, { label: string; color: string }> = {
+  price_change: { label: "Price Change", color: "#ffa500" },
+  visibility_change: { label: "Visibility", color: "#9b59b6" },
+  inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
+  theme_publish: { label: "Theme Published", color: "#3498db" },
 };
 
 const importanceConfig: Record<string, { label: string; color: string }> = {
@@ -76,7 +76,6 @@ export default function RecentChanges() {
           {events.map((event: ChangeEvent) => {
             const config = eventConfig[event.eventType] || {
               label: event.eventType,
-              emoji: "\uD83D\uDD14",
               color: "#666",
             };
             const importance = importanceConfig[event.importance] || importanceConfig.medium;
@@ -102,7 +101,6 @@ export default function RecentChanges() {
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 20 }}>{config.emoji}</span>
                     <span
                       style={{
                         background: config.color,
@@ -177,19 +175,6 @@ export default function RecentChanges() {
                   </div>
                 )}
 
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 16,
-                    marginTop: 8,
-                    fontSize: 11,
-                    color: "#8c9196",
-                  }}
-                >
-                  <span>Entity: {event.entityType}</span>
-                  <span>ID: {event.entityId}</span>
-                  <span>Source: {event.source}</span>
-                </div>
               </div>
             );
           })}

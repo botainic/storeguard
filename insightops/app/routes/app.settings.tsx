@@ -139,22 +139,6 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Feedback message */}
-      {actionData && (
-        <div
-          style={{
-            padding: 12,
-            marginBottom: 24,
-            borderRadius: 8,
-            background: actionData.success ? "#f0fdf4" : "#fef2f2",
-            border: `1px solid ${actionData.success ? "#bbf7d0" : "#fecaca"}`,
-            color: actionData.success ? "#166534" : "#991b1b",
-          }}
-        >
-          {actionData.message}
-        </div>
-      )}
-
       <Form method="post">
         {/* Email Section */}
         <Section title="Daily Digest Email">
@@ -330,7 +314,7 @@ export default function Settings() {
         </Section>
 
         {/* Submit Button */}
-        <div style={{ marginTop: 24 }}>
+        <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 16 }}>
           <button
             type="submit"
             disabled={isSubmitting}
@@ -347,6 +331,16 @@ export default function Settings() {
           >
             {isSubmitting ? "Saving..." : "Save settings"}
           </button>
+          {actionData && (
+            <span
+              style={{
+                fontSize: 14,
+                color: actionData.success ? "#166534" : "#991b1b",
+              }}
+            >
+              {actionData.message}
+            </span>
+          )}
         </div>
       </Form>
     </div>
