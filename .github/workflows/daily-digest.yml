@@ -1,0 +1,15 @@
+name: Daily Digest
+on:
+  schedule:
+    - cron: '0 9 * * *'  # 9:00 AM UTC daily
+  workflow_dispatch:  # Manual trigger for testing
+
+jobs:
+  trigger-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger digest endpoint
+        run: |
+          curl -X POST https://storeguard-app.onrender.com/api/digest \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -f --retry 3 --retry-delay 5
