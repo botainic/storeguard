@@ -612,19 +612,29 @@ Note: `EventLog` model still in use by jobProcessor/productSync for baseline tra
 
 ## Launch Checklist
 
+### Development Complete
 - [x] All 18 issues completed (Milestones 0-7)
 - [x] Privacy policy page exists (at /privacy route)
 - [x] GDPR webhooks implemented (customers/data_request, customers/redact, shop/redact)
 - [x] Uninstall cleanup with Stripe cancellation
 - [x] App config updated (shopify.app.toml)
+- [x] Stripe products created ($19/month Pro plan)
+- [x] UX polish: removed emojis, cleaned up metadata, fixed toast positioning
+
+### Production Deployment (Render) - DONE 2026-02-02
+- [x] Production database provisioned (PostgreSQL on Render)
+- [x] Production environment variables configured
+- [x] Stripe webhook URL configured (`https://storeguard-app.onrender.com/api/stripe/webhook`)
+- [x] Shopify app deployed (`npm run deploy --force`)
+- [x] App live at: https://storeguard-app.onrender.com
+- [x] Change detection working (tested with price change)
+
+### Remaining Tasks
+- [ ] **Add CRON_SECRET to GitHub Secrets** - Go to GitHub repo → Settings → Secrets → Actions → Add `CRON_SECRET` (get value from Render environment)
+- [ ] **Test daily digest** - Manually trigger: `curl -X POST https://storeguard-app.onrender.com/api/digest -H "Authorization: Bearer YOUR_CRON_SECRET"`
+- [ ] **Email deliverability** - If you have a domain, add to Resend with SPF/DKIM/DMARC
 - [ ] App listing copy written
 - [ ] Screenshots captured (Settings, Digest email, Changes page)
 - [ ] Support email configured
-- [x] Stripe products created ($19/month Pro plan)
-- [ ] Production database provisioned (PostgreSQL)
-- [ ] Production environment variables configured
-- [ ] Stripe webhook URL configured in Stripe Dashboard
-- [ ] Email service verified (Resend)
-- [ ] Cron job configured for daily digest
 - [ ] App submitted to Shopify
 - [ ] Marketing site live
