@@ -25,6 +25,5 @@ RUN npm run build
 # Remove dev dependencies after build
 RUN npm prune --production
 
-# Production should start fast and be stateless. Schema changes should be applied
-# via a separate deploy/release step (e.g. prisma migrate deploy), not on every boot.
-CMD ["npm", "run", "start"]
+# Run migrations and start server
+CMD ["sh", "-c", "npx prisma db push --skip-generate && npm run start"]
