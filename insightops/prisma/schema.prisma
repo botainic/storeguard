@@ -36,11 +36,13 @@ model Shop {
   id              String    @id @default(uuid())
   shopifyDomain   String    @unique // e.g., "mystore.myshopify.com"
   plan            String    @default("free") // "free" | "pro"
-  alertEmail      String?   // Email for daily digest
+  alertEmail      String?   // Email for daily digest and instant alerts
   trackPrices     Boolean   @default(true)
   trackVisibility Boolean   @default(true)
   trackInventory  Boolean   @default(true)
   trackThemes     Boolean   @default(false) // Pro only
+  lowStockThreshold Int     @default(5) // Alert when inventory drops below this
+  instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
   installedAt     DateTime  @default(now())
   uninstalledAt   DateTime?
   // Stripe billing
@@ -54,7 +56,7 @@ model ChangeEvent {
   shop         String    // Store URL
   entityType   String    // "product" | "variant" | "theme"
   entityId     String    // Shopify ID of the entity
-  eventType    String    // "price_change" | "visibility_change" | "inventory_zero" | "theme_publish"
+  eventType    String    // "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish"
   resourceName String    // Product/Theme title for display (human-readable)
   beforeValue  String?   // Previous value (JSON or simple string)
   afterValue   String?   // New value (JSON or simple string)

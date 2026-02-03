@@ -9,6 +9,7 @@ import {
 import {
   processProductChanges,
   detectInventoryZero,
+  detectLowStock,
   deleteProductSnapshot,
 } from "./changeDetection.server";
 
@@ -586,6 +587,7 @@ async function processInventoryUpdate(
   let productId = "";
   let productType = "";
 
+  let variantId = "";
   try {
     // GraphQL replacement for deprecated REST /products and /variants
     // Get variant + product info using the inventory item id.
@@ -621,9 +623,14 @@ async function processInventoryUpdate(
       variantTitle = String(v.title || "");
       productTitle = String(v.product?.title || productTitle);
       productType = String(v.product?.productType || "");
-      const gid: string | undefined = v.product?.id;
-      const m = typeof gid === "string" ? gid.match(/\/Product\/(\d+)$/) : null;
-      productId = m?.[1] ?? "";
+      // Extract product ID
+      const productGid: string | undefined = v.product?.id;
+      const productMatch = typeof productGid === "string" ? productGid.match(/\/Product\/(\d+)$/) : null;
+      productId = productMatch?.[1] ?? "";
+      // Extract variant ID for ProductSnapshot lookup
+      const variantGid: string | undefined = v.id;
+      const variantMatch = typeof variantGid === "string" ? variantGid.match(/\/ProductVariant\/(\d+)$/) : null;
+      variantId = variantMatch?.[1] ?? "";
     }
   } catch (fetchError) {
     console.error(`[StoreGuard] Failed to fetch product info:`, fetchError);
@@ -664,8 +671,10 @@ async function processInventoryUpdate(
   }
 
   // Get previous inventory level for diff display AND for >0→0 detection
+  // Strategy: Check EventLog first (most recent), then fall back to ProductSnapshot
   let oldAvailable: number | null = null;
   try {
+    // First, try EventLog (recent inventory updates)
     const previousEvent = await db.eventLog.findFirst({
       where: {
         shop,
@@ -679,23 +688,99 @@ async function processInventoryUpdate(
       const prevDiff = JSON.parse(previousEvent.diff);
       oldAvailable = prevDiff.available;
     }
+
+    // If no EventLog, fall back to ProductSnapshot
+    if (oldAvailable === null && productId && variantId) {
+      const snapshot = await db.productSnapshot.findUnique({
+        where: { shop_id: { shop, id: productId } },
+      });
+      if (snapshot?.variants) {
+        try {
+          const variants = JSON.parse(snapshot.variants) as Array<{ id: string; inventoryQuantity: number }>;
+          const matchingVariant = variants.find(v => v.id === variantId);
+          if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
+            oldAvailable = matchingVariant.inventoryQuantity;
+            console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from ProductSnapshot for ${productTitle}`);
+          }
+        } catch {
+          // Invalid JSON in snapshot
+        }
+      }
+    }
   } catch (prevError) {
     console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
   }
 
-  // === StoreGuard: Detect inventory hitting zero ===
-  // Rule: Only triggers on >0 → 0 transition
-  if (productId && webhookId && payload.available === 0) {
-    await detectInventoryZero(
+  // === StoreGuard: Detect inventory changes ===
+  if (productId && webhookId) {
+    // Detect low stock (crossing below threshold)
+    const lowStockDetected = await detectLowStock(
       shop,
       String(payload.inventory_item_id),
       productId,
       productTitle,
       variantTitle,
       payload.available,
-      oldAvailable, // Pass previous quantity for >0→0 check
+      oldAvailable,
       webhookId
     );
+
+    // Detect inventory hitting zero (only if not already low stock alert)
+    // Rule: Only triggers on >0 → 0 transition
+    if (payload.available === 0 && !lowStockDetected) {
+      await detectInventoryZero(
+        shop,
+        String(payload.inventory_item_id),
+        productId,
+        productTitle,
+        variantTitle,
+        payload.available,
+        oldAvailable,
+        webhookId
+      );
+    }
+  }
+
+  // Update or create ProductSnapshot with inventory (keeps snapshot current for future comparisons)
+  if (productId && variantId) {
+    try {
+      const snapshot = await db.productSnapshot.findUnique({
+        where: { shop_id: { shop, id: productId } },
+      });
+      if (snapshot?.variants) {
+        // Update existing snapshot
+        const variants = JSON.parse(snapshot.variants) as Array<{ id: string; title: string; price: string; inventoryQuantity: number }>;
+        const variantIndex = variants.findIndex(v => v.id === variantId);
+        if (variantIndex >= 0) {
+          variants[variantIndex].inventoryQuantity = payload.available;
+          await db.productSnapshot.update({
+            where: { shop_id: { shop, id: productId } },
+            data: { variants: JSON.stringify(variants) },
+          });
+          console.log(`[StoreGuard] Updated ProductSnapshot inventory for ${productTitle}: ${payload.available}`);
+        }
+      } else if (!snapshot) {
+        // No snapshot exists - create a minimal one for future tracking
+        // This ensures the NEXT inventory change can be detected
+        await db.productSnapshot.create({
+          data: {
+            id: productId,
+            shop,
+            title: productTitle,
+            status: "active", // Default assumption
+            variants: JSON.stringify([{
+              id: variantId,
+              title: variantTitle || "Default Title",
+              price: "0.00",
+              inventoryQuantity: payload.available,
+            }]),
+          },
+        });
+        console.log(`[StoreGuard] Created ProductSnapshot from inventory webhook for ${productTitle}`);
+      }
+    } catch (snapshotError) {
+      console.error(`[StoreGuard] Failed to update ProductSnapshot inventory:`, snapshotError);
+    }
   }
 
   const displayName =
@@ -725,7 +810,9 @@ async function processInventoryUpdate(
   await db.eventLog.create({
     data: {
       shop,
-      shopifyId: productId || String(payload.inventory_item_id),
+      // Use inventory_item_id consistently for inventory events
+      // This matches the lookup in getPreviousInventory above
+      shopifyId: String(payload.inventory_item_id),
       topic: "INVENTORY_LEVELS_UPDATE",
       author: "System/App",
       message,

@@ -30,6 +30,7 @@ export interface DigestSummary {
   eventsByType: {
     price_change: DigestEvent[];
     visibility_change: DigestEvent[];
+    inventory_low: DigestEvent[];
     inventory_zero: DigestEvent[];
     theme_publish: DigestEvent[];
   };
@@ -112,6 +113,7 @@ export async function generateDigestForShop(shopDomain: string): Promise<DigestS
   const eventsByType = {
     price_change: [] as DigestEvent[],
     visibility_change: [] as DigestEvent[],
+    inventory_low: [] as DigestEvent[],
     inventory_zero: [] as DigestEvent[],
     theme_publish: [] as DigestEvent[],
   };
@@ -180,6 +182,7 @@ export function getEventIdsFromDigest(digest: DigestSummary): string[] {
   const allEvents = [
     ...digest.eventsByType.price_change,
     ...digest.eventsByType.visibility_change,
+    ...digest.eventsByType.inventory_low,
     ...digest.eventsByType.inventory_zero,
     ...digest.eventsByType.theme_publish,
   ];
@@ -196,6 +199,8 @@ export function formatEventType(eventType: string): string {
       return "Price Changes";
     case "visibility_change":
       return "Visibility Changes";
+    case "inventory_low":
+      return "Low Stock";
     case "inventory_zero":
       return "Out of Stock";
     case "theme_publish":
@@ -220,6 +225,8 @@ export function formatEventForEmail(event: DigestEvent): string {
       return `${event.resourceName}: ${event.beforeValue} → ${event.afterValue} (${time})`;
     case "visibility_change":
       return `${event.resourceName}: ${event.beforeValue} → ${event.afterValue} (${time})`;
+    case "inventory_low":
+      return `${event.resourceName}: stock dropped to ${event.afterValue} units (was ${event.beforeValue}) (${time})`;
     case "inventory_zero":
       return `${event.resourceName}: now out of stock (was ${event.beforeValue} units) (${time})`;
     case "theme_publish":

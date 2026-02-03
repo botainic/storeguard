@@ -1,5 +1,6 @@
 import db from "../db.server";
-import { canTrackFeature } from "./shopService.server";
+import { canTrackFeature, getLowStockThreshold, hasInstantAlerts, getShopAlertEmail } from "./shopService.server";
+import { sendInstantAlert } from "./emailService.server";
 
 /**
  * Change Detection Service for StoreGuard
@@ -104,7 +105,7 @@ async function createChangeEvent(data: {
   shop: string;
   entityType: "product" | "variant" | "theme";
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_zero" | "theme_publish";
+  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -114,7 +115,7 @@ async function createChangeEvent(data: {
   groupId?: string;
 }): Promise<void> {
   try {
-    await db.changeEvent.create({
+    const event = await db.changeEvent.create({
       data: {
         shop: data.shop,
         entityType: data.entityType,
@@ -130,6 +131,29 @@ async function createChangeEvent(data: {
       },
     });
     console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
+
+    // Send instant alert if enabled (Pro feature)
+    const shouldSendInstant = await hasInstantAlerts(data.shop);
+    if (shouldSendInstant) {
+      const alertEmail = await getShopAlertEmail(data.shop);
+      if (alertEmail) {
+        // Fire and forget - don't block on email sending
+        sendInstantAlert(
+          {
+            eventType: data.eventType,
+            resourceName: data.resourceName,
+            beforeValue: data.beforeValue,
+            afterValue: data.afterValue,
+            importance: data.importance ?? "medium",
+            detectedAt: event.detectedAt,
+          },
+          data.shop,
+          alertEmail
+        ).catch((err) => {
+          console.error(`[StoreGuard] Failed to send instant alert:`, err);
+        });
+      }
+    }
   } catch (error: unknown) {
     // Handle duplicate webhookId (already processed)
     if (error instanceof Error && error.message.includes("Unique constraint")) {
@@ -387,6 +411,85 @@ export async function detectInventoryZero(
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
     importance: "high", // Out of stock is always high importance
   });
+
+  return true;
+}
+
+/**
+ * Detect inventory dropping below low stock threshold
+ * Triggers when quantity crosses from above threshold to at or below threshold
+ * Does NOT trigger on: already below threshold, or at zero (that's inventory_zero)
+ */
+export async function detectLowStock(
+  shop: string,
+  inventoryItemId: string,
+  productId: string,
+  productTitle: string,
+  variantTitle: string,
+  newQuantity: number,
+  previousQuantity: number | null,
+  webhookId: string
+): Promise<boolean> {
+  // Get the shop's low stock threshold
+  const threshold = await getLowStockThreshold(shop);
+  if (threshold === null) {
+    return false; // Shop doesn't exist or inventory tracking disabled
+  }
+
+  // Skip if new quantity is zero (that's handled by detectInventoryZero)
+  if (newQuantity === 0) {
+    return false;
+  }
+
+  // Skip if we don't know the previous quantity
+  if (previousQuantity === null || previousQuantity === undefined) {
+    console.log(`[StoreGuard] No previous inventory for ${productTitle}, can't detect low stock`);
+    return false;
+  }
+
+  // Rule: Only alert when crossing the threshold from above to at/below
+  // previousQuantity > threshold AND newQuantity <= threshold
+  const wasAboveThreshold = previousQuantity > threshold;
+  const isAtOrBelowThreshold = newQuantity <= threshold;
+
+  if (!wasAboveThreshold || !isAtOrBelowThreshold) {
+    return false; // Not a threshold crossing
+  }
+
+  // Check for recent low stock alert for this variant (24 hour dedup)
+  const recentAlert = await db.changeEvent.findFirst({
+    where: {
+      shop,
+      eventType: "inventory_low",
+      entityId: inventoryItemId,
+      detectedAt: {
+        gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      },
+    },
+  });
+
+  if (recentAlert) {
+    console.log(`[StoreGuard] Already alerted for ${productTitle} low stock in last 24h`);
+    return false;
+  }
+
+  const displayName = variantTitle && variantTitle !== "Default Title"
+    ? `${productTitle} - ${variantTitle}`
+    : productTitle;
+
+  await createChangeEvent({
+    shop,
+    entityType: "variant",
+    entityId: inventoryItemId,
+    eventType: "inventory_low",
+    resourceName: displayName,
+    beforeValue: String(previousQuantity),
+    afterValue: String(newQuantity),
+    webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
+    importance: "medium", // Low stock is medium importance (zero is high)
+  });
+
+  console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} (threshold: ${threshold})`);
 
   return true;
 }

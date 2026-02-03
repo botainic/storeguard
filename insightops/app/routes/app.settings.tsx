@@ -28,6 +28,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   const trackVisibility = formData.get("trackVisibility") === "on";
   const trackInventory = formData.get("trackInventory") === "on";
   const trackThemes = formData.get("trackThemes") === "on";
+  const lowStockThreshold = parseInt(formData.get("lowStockThreshold") as string) || 5;
+  const instantAlerts = formData.get("instantAlerts") === "on";
 
   const trimmedEmail = alertEmail?.trim() || null;
   if (trimmedEmail) {
@@ -48,6 +50,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
       trackVisibility,
       trackInventory,
       trackThemes,
+      lowStockThreshold,
+      instantAlerts,
     });
     return { success: true, message: "Settings saved" };
   } catch (error) {
@@ -169,10 +173,33 @@ export default function Settings() {
           />
           <Toggle
             name="trackInventory"
-            label="Out of stock alerts"
-            description="Track when inventory drops to zero"
+            label="Inventory alerts"
+            description="Track low stock and out of stock"
             defaultChecked={settings.trackInventory}
           />
+          {settings.trackInventory && (
+            <div style={{ marginLeft: 28, marginBottom: 10 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151" }}>
+                Alert when stock drops below
+                <input
+                  type="number"
+                  name="lowStockThreshold"
+                  defaultValue={settings.lowStockThreshold}
+                  min={1}
+                  max={100}
+                  style={{
+                    width: 60,
+                    padding: "4px 8px",
+                    fontSize: 13,
+                    border: "1px solid #d1d5db",
+                    borderRadius: 4,
+                    textAlign: "center",
+                  }}
+                />
+                units
+              </label>
+            </div>
+          )}
           <Toggle
             name="trackThemes"
             label="Theme publishes"
@@ -248,10 +275,19 @@ export default function Settings() {
           )}
         </Section>
 
-        {/* 3. Notifications - Less prominent */}
-        <Section title="Daily Digest">
+        {/* 3. Notifications */}
+        <Section title="Notifications">
+          <Toggle
+            name="instantAlerts"
+            label="Instant alerts"
+            description="Send email immediately when changes are detected"
+            defaultChecked={settings.instantAlerts}
+            disabled={settings.plan !== "pro"}
+            proOnly
+          />
+          <div style={{ height: 8 }} />
           <p style={{ color: "#637381", fontSize: 13, marginBottom: 12 }}>
-            Recipients will receive a daily summary of detected changes.
+            Recipients will also receive a daily summary of all changes.
           </p>
 
           {/* Email chips */}

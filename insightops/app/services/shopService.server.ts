@@ -7,6 +7,8 @@ export interface ShopSettings {
   trackVisibility: boolean;
   trackInventory: boolean;
   trackThemes: boolean;
+  lowStockThreshold: number;
+  instantAlerts: boolean;
 }
 
 /**
@@ -42,6 +44,8 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    lowStockThreshold: shop.lowStockThreshold,
+    instantAlerts: shop.instantAlerts,
   };
 }
 
@@ -63,6 +67,8 @@ export async function getShopSettings(shopDomain: string): Promise<ShopSettings 
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    lowStockThreshold: shop.lowStockThreshold,
+    instantAlerts: shop.instantAlerts,
   };
 }
 
@@ -89,6 +95,18 @@ export async function updateShopSettings(
     trackThemes = false;
   }
 
+  // Instant alerts are Pro-only
+  let instantAlerts = settings.instantAlerts ?? shop.instantAlerts;
+  if (shop.plan !== "pro" && instantAlerts) {
+    console.log(`[StoreGuard] Blocking instantAlerts for free plan: ${shopDomain}`);
+    instantAlerts = false;
+  }
+
+  // Validate low stock threshold (1-100 range)
+  let lowStockThreshold = settings.lowStockThreshold ?? shop.lowStockThreshold;
+  if (lowStockThreshold < 1) lowStockThreshold = 1;
+  if (lowStockThreshold > 100) lowStockThreshold = 100;
+
   const updated = await db.shop.update({
     where: { shopifyDomain: shopDomain },
     data: {
@@ -97,6 +115,8 @@ export async function updateShopSettings(
       trackVisibility: settings.trackVisibility ?? shop.trackVisibility,
       trackInventory: settings.trackInventory ?? shop.trackInventory,
       trackThemes,
+      lowStockThreshold,
+      instantAlerts,
     },
   });
 
@@ -109,6 +129,8 @@ export async function updateShopSettings(
     trackVisibility: updated.trackVisibility,
     trackInventory: updated.trackInventory,
     trackThemes: updated.trackThemes,
+    lowStockThreshold: updated.lowStockThreshold,
+    instantAlerts: updated.instantAlerts,
   };
 }
 
@@ -151,6 +173,7 @@ export async function downgradeShopToFree(shopDomain: string): Promise<void> {
     data: {
       plan: "free",
       trackThemes: false, // Disable Pro-only features
+      instantAlerts: false, // Disable Pro-only features
     },
   });
   console.log(`[StoreGuard] Downgraded to Free: ${shopDomain}`);
@@ -192,4 +215,43 @@ export async function canTrackFeature(
     default:
       return false;
   }
+}
+
+/**
+ * Get the low stock threshold for a shop.
+ * Returns the threshold or null if shop doesn't exist or inventory tracking is disabled.
+ */
+export async function getLowStockThreshold(shopDomain: string): Promise<number | null> {
+  const shop = await db.shop.findUnique({
+    where: { shopifyDomain: shopDomain },
+    select: { trackInventory: true, lowStockThreshold: true },
+  });
+
+  if (!shop || !shop.trackInventory) return null;
+  return shop.lowStockThreshold;
+}
+
+/**
+ * Check if instant alerts are enabled for a shop.
+ * Returns true only for Pro shops with instant alerts enabled.
+ */
+export async function hasInstantAlerts(shopDomain: string): Promise<boolean> {
+  const shop = await db.shop.findUnique({
+    where: { shopifyDomain: shopDomain },
+    select: { plan: true, instantAlerts: true, alertEmail: true },
+  });
+
+  return shop?.plan === "pro" && shop?.instantAlerts && !!shop?.alertEmail;
+}
+
+/**
+ * Get shop alert email for instant notifications.
+ */
+export async function getShopAlertEmail(shopDomain: string): Promise<string | null> {
+  const shop = await db.shop.findUnique({
+    where: { shopifyDomain: shopDomain },
+    select: { alertEmail: true },
+  });
+
+  return shop?.alertEmail ?? null;
 }

@@ -100,6 +100,15 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
     ));
   }
 
+  // Low stock
+  if (digest.eventsByType.inventory_low && digest.eventsByType.inventory_low.length > 0) {
+    sections.push(buildEventSection(
+      "⚠️ Low Stock",
+      digest.eventsByType.inventory_low,
+      "#f97316" // orange
+    ));
+  }
+
   // Out of stock
   if (digest.eventsByType.inventory_zero.length > 0) {
     sections.push(buildEventSection(
@@ -223,6 +232,8 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
       return `${event.beforeValue} → ${event.afterValue} • ${time}`;
     case "visibility_change":
       return `${event.beforeValue} → ${event.afterValue} • ${time}`;
+    case "inventory_low":
+      return `Stock dropped to ${event.afterValue} units (was ${event.beforeValue}) • ${time}`;
     case "inventory_zero":
       return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
     case "theme_publish":
@@ -242,4 +253,171 @@ export async function sendDigestEmail(digest: DigestSummary): Promise<SendEmailR
   const html = generateDigestEmailHtml(digest);
 
   return sendEmail(digest.alertEmail, subject, html);
+}
+
+// ============================================
+// INSTANT ALERTS
+// ============================================
+
+interface InstantAlertEvent {
+  eventType: string;
+  resourceName: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+  importance: string;
+  detectedAt: Date;
+}
+
+/**
+ * Get subject line for instant alert based on event type
+ */
+function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): string {
+  switch (event.eventType) {
+    case "price_change":
+      return `⚡ Price changed: ${event.resourceName} - ${shopName}`;
+    case "visibility_change":
+      return `⚡ Product ${event.afterValue === "active" ? "published" : "hidden"}: ${event.resourceName} - ${shopName}`;
+    case "inventory_low":
+      return `⚠️ Low stock: ${event.resourceName} (${event.afterValue} left) - ${shopName}`;
+    case "inventory_zero":
+      return `🚨 Out of stock: ${event.resourceName} - ${shopName}`;
+    case "theme_publish":
+      return `🎨 Theme published: ${event.resourceName} - ${shopName}`;
+    default:
+      return `⚡ Change detected: ${event.resourceName} - ${shopName}`;
+  }
+}
+
+/**
+ * Get alert icon based on event type
+ */
+function getAlertIcon(eventType: string): string {
+  switch (eventType) {
+    case "price_change": return "💰";
+    case "visibility_change": return "👁️";
+    case "inventory_low": return "⚠️";
+    case "inventory_zero": return "🚨";
+    case "theme_publish": return "🎨";
+    default: return "⚡";
+  }
+}
+
+/**
+ * Get alert color based on event type
+ */
+function getAlertColor(eventType: string): string {
+  switch (eventType) {
+    case "price_change": return "#f59e0b";
+    case "visibility_change": return "#8b5cf6";
+    case "inventory_low": return "#f97316";
+    case "inventory_zero": return "#ef4444";
+    case "theme_publish": return "#06b6d4";
+    default: return "#6b7280";
+  }
+}
+
+/**
+ * Generate HTML for instant alert email
+ */
+function generateInstantAlertHtml(
+  event: InstantAlertEvent,
+  shop: string
+): string {
+  const shopName = shop.replace(".myshopify.com", "");
+  const icon = getAlertIcon(event.eventType);
+  const color = getAlertColor(event.eventType);
+  const time = event.detectedAt.toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  // Build change description
+  let changeDescription = "";
+  switch (event.eventType) {
+    case "price_change":
+      changeDescription = `Price changed from ${event.beforeValue} to ${event.afterValue}`;
+      break;
+    case "visibility_change":
+      changeDescription = `Status changed from ${event.beforeValue} to ${event.afterValue}`;
+      break;
+    case "inventory_low":
+      changeDescription = `Stock dropped to ${event.afterValue} units (was ${event.beforeValue})`;
+      break;
+    case "inventory_zero":
+      changeDescription = `Now out of stock (was ${event.beforeValue} units)`;
+      break;
+    case "theme_publish":
+      changeDescription = `"${event.resourceName}" is now your live theme`;
+      break;
+    default:
+      changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;
+  }
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StoreGuard Alert</title>
+</head>
+<body style="margin: 0; padding: 0; background: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <div style="max-width: 500px; margin: 0 auto; padding: 24px;">
+    <!-- Header -->
+    <div style="background: ${color}; color: #fff; padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">${icon}</div>
+      <h1 style="margin: 0; font-size: 18px; font-weight: 600;">Instant Alert</h1>
+      <p style="margin: 4px 0 0; opacity: 0.9; font-size: 13px;">${shopName}</p>
+    </div>
+
+    <!-- Content -->
+    <div style="background: #fff; padding: 24px; border-radius: 0 0 12px 12px;">
+      <h2 style="margin: 0 0 8px; font-size: 18px; font-weight: 600; color: #111827;">
+        ${event.resourceName}
+      </h2>
+      <p style="margin: 0 0 16px; color: #374151; font-size: 15px;">
+        ${changeDescription}
+      </p>
+      <p style="margin: 0; color: #9ca3af; font-size: 13px;">
+        Detected at ${time}
+      </p>
+
+      <!-- Action -->
+      <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
+        <a href="https://${shop}/admin"
+           style="display: inline-block; background: #000; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500;">
+          View in Shopify Admin
+        </a>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p style="margin: 16px 0 0; text-align: center; color: #9ca3af; font-size: 12px;">
+      <a href="https://${shop}/admin/apps/storeguard/settings" style="color: #6b7280;">Manage instant alerts</a>
+    </p>
+  </div>
+</body>
+</html>
+`.trim();
+}
+
+/**
+ * Send instant alert email for a single change event
+ */
+export async function sendInstantAlert(
+  event: InstantAlertEvent,
+  shop: string,
+  alertEmail: string
+): Promise<SendEmailResult> {
+  const shopName = shop.replace(".myshopify.com", "");
+  const subject = getInstantAlertSubject(event, shopName);
+  const html = generateInstantAlertHtml(event, shop);
+
+  console.log(`[StoreGuard] Sending instant alert: ${event.eventType} for ${event.resourceName}`);
+
+  return sendEmail(alertEmail, subject, html);
 }

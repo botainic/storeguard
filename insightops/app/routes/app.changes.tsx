@@ -38,6 +38,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 const eventConfig: Record<string, { label: string; color: string }> = {
   price_change: { label: "Price Change", color: "#ffa500" },
   visibility_change: { label: "Visibility", color: "#9b59b6" },
+  inventory_low: { label: "Low Stock", color: "#f97316" },
   inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
   theme_publish: { label: "Theme Published", color: "#3498db" },
 };
