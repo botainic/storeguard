@@ -16,10 +16,6 @@ api_version = "2025-10"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
   [[webhooks.subscriptions]]
-  topics = [ "collections/create" ]
-  uri = "/webhooks/collections/create"
-
-  [[webhooks.subscriptions]]
   topics = [ "products/delete" ]
   uri = "/webhooks/products/delete"
 
@@ -34,18 +30,6 @@ api_version = "2025-10"
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
-
-  [[webhooks.subscriptions]]
-  topics = [ "collections/delete" ]
-  uri = "/webhooks/collections/delete"
-
-  [[webhooks.subscriptions]]
-  topics = [ "collections/update" ]
-  uri = "/webhooks/collections/update"
-
-  [[webhooks.subscriptions]]
-  topics = [ "orders/paid" ]
-  uri = "/webhooks/orders/paid"
 
   [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]

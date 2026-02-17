@@ -101,6 +101,8 @@ model Shop {
   trackVisibility  Boolean  @default(true)
   trackInventory   Boolean  @default(true)
   trackThemes      Boolean  @default(false) // Pro only
+  lowStockThreshold Int     @default(5) // Alert when inventory drops below this
+  instantAlerts    Boolean  @default(false) // Send alerts immediately (Pro only)
   installedAt      DateTime @default(now())
   uninstalledAt    DateTime?
 }
@@ -110,7 +112,7 @@ model ChangeEvent {
   shop         String
   entityType   String   // "product" | "variant" | "theme"
   entityId     String   // Shopify ID of the entity
-  eventType    String   // "price_change" | "visibility_change" | "inventory_zero" | "theme_publish"
+  eventType    String   // "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish"
   resourceName String   // Human-readable name for display
   beforeValue  String?  // Previous value
   afterValue   String?  // New value
@@ -166,12 +168,24 @@ model ProductSnapshot {
 - **Ignored**: `draft <-> archived` (both hidden, not meaningful)
 - **Entity**: `product`
 
+### Low Stock Detection (NEW)
+- **Rule**: Trigger when quantity crosses from above threshold to at/below threshold
+- **Threshold**: Configurable per shop (default: 5 units)
+- **Ignore**:
+  - Already below threshold (no repeated alerts)
+  - Quantity is zero (handled by inventory_zero)
+  - `null -> any` (unknown previous state)
+- **Entity**: `variant` (uses inventory_item_id)
+- **Importance**: Always `medium`
+- **Dedup**: 24-hour window per variant to prevent spam
+
 ### Inventory Zero Detection (ISSUE #8)
 - **Rule**: Only trigger on transition `>0 -> 0`
 - **Ignore**:
   - `0 -> 0` (no change)
   - `negative -> 0` (edge case)
   - `null -> 0` (unknown previous state)
+  - Low stock already triggered (prevents double alert)
 - **Entity**: `variant` (uses inventory_item_id)
 - **Importance**: Always `high`
 - **Dedup**: 24-hour window per variant to prevent spam
@@ -374,6 +388,7 @@ const PRO_LIMITS = {
 | Daily digest email | ✅ |
 | Price change tracking | ✅ |
 | Visibility change tracking | ✅ |
+| Low stock alerts | ✅ (configurable threshold) |
 | Inventory zero tracking | ✅ |
 | Alert history | 7 days |
 | Theme publish alerts | ❌ |
@@ -389,15 +404,17 @@ const PRO_LIMITS = {
 | Daily digest email | ✅ |
 | Price change tracking | ✅ |
 | Visibility change tracking | ✅ |
+| Low stock alerts | ✅ (configurable threshold) |
 | Inventory zero tracking | ✅ |
 | Alert history | 90 days |
 | Theme publish alerts | ✅ |
+| Instant alerts | ✅ (email immediately) |
 | Priority processing | ✅ |
 
 **Why $19**: Impulse-buy, no finance gate, comparable to utility apps, proves willingness to pay.
 
 ### Explicitly NOT in V1
-- ❌ Instant alerts (email/Slack)
+- ❌ Slack integration (instant alerts are email only)
 - ❌ AI summaries
 - ❌ Sales/conversion analysis
 - ❌ Multiple pricing tiers
@@ -541,8 +558,30 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
     - `app/services/stripeService.server.ts` - Added cancelShopSubscription
     - `shopify.app.toml` - App config for submission
 
+### V1.1 Enhancements (2026-02-03)
+- [x] **Low Stock Alerts** - Configurable threshold (default: 5 units)
+  - New `lowStockThreshold` field in Shop model
+  - New `inventory_low` event type
+  - Triggers when stock drops below threshold
+  - Settings UI with threshold input
+- [x] **Instant Alerts (Pro only)** - Email immediately on change detection
+  - New `instantAlerts` field in Shop model
+  - Sends email right away instead of waiting for daily digest
+  - Clean instant alert email template
+  - Pro-only feature gate
+- Files changed:
+  - `prisma/schema.prisma` - Added lowStockThreshold, instantAlerts
+  - `app/services/shopService.server.ts` - New settings + feature gates
+  - `app/services/changeDetection.server.ts` - detectLowStock function + instant alert integration
+  - `app/services/emailService.server.ts` - Instant alert emails
+  - `app/services/dailyDigest.server.ts` - inventory_low support
+  - `app/services/jobProcessor.server.ts` - Low stock detection call
+  - `app/routes/app.settings.tsx` - Threshold input + instant alerts toggle
+  - `app/routes/app.changes.tsx` - inventory_low display
+
 ### Completed
 - All milestones complete! 🎉
+- V1.1 enhancements complete!
 
 ### Blocked
 - None
@@ -562,6 +601,8 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
 | 2026-01-30 | Resend for email | User confirmed - modern, developer-friendly, great deliverability |
 | 2026-01-30 | Stripe for billing | User confirmed - more flexible than Shopify billing |
 | 2026-01-30 | UTC for digest timezone | User confirmed - simpler for V1, can add timezone later |
+| 2026-02-03 | Add low stock alerts | Market research: "zero only" is too late, all competitors have threshold alerts |
+| 2026-02-03 | Add instant alerts (Pro) | Market research: many competitors offer instant + scheduled, Pro feature differentiator |
 
 ---
 
