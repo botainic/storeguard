@@ -679,3 +679,116 @@ Note: `EventLog` model still in use by jobProcessor/productSync for baseline tra
 - [ ] Support email configured
 - [ ] App submitted to Shopify
 - [ ] Marketing site live
+
+---
+
+## V2 — Store Protection Expansion
+
+> **Read PRD_V2.md for full product requirements. This section covers what changed for V2.**
+
+### V2 Identity (CRITICAL)
+StoreGuard is a **store protection app**, NOT a staff attribution tool. We do NOT:
+- Track who made changes (webhooks don't include user IDs for public apps)
+- Do sales causality analysis
+- Do "blame game" features
+- Show analytics or charts
+
+We DO: Monitor changes that cost merchants money and alert with business context.
+
+### V2 New Monitoring Types
+
+**Collections** (scope: read_products — already have)
+- `collections/create` — new collection created
+- `collections/update` — products added/removed, rules changed
+- `collections/delete` — collection deleted (breaks links)
+- Entity: `collection`
+- Event types: `collection_products_changed`, `collection_deleted`
+
+**Discounts** (NEW scope needed: read_discounts)
+- `discounts/create` — new discount code created
+- `discounts/update` — discount modified
+- `discounts/delete` — discount deleted
+- Entity: `discount`
+- Event types: `discount_created`, `discount_changed`, `discount_deleted`
+- **Pro only**
+
+**Domains** (no scope needed)
+- `domains/create` — domain added
+- `domains/update` — domain changed
+- `domains/destroy` — domain removed
+- Entity: `domain`
+- Event types: `domain_changed`, `domain_removed`
+- **Pro only**
+
+**App Permissions** (no scope needed)
+- `app/scopes_update` — any installed app changes its permissions
+- Entity: `app`
+- Event type: `app_permissions_changed`
+- **Pro only**
+
+### V2 Schema Additions
+```prisma
+// Extend ChangeEvent entityType to include: "collection" | "discount" | "domain" | "app"
+// Extend eventType to include new types above
+// Add contextData Json? field for business context
+// Add revenueImpact Decimal? field for money saved calculation
+
+// New: Money Saved tracking
+model MoneyImpact {
+  id                String   @id @default(uuid())
+  shop              String
+  changeEventId     String   @unique
+  estimatedSavings  Decimal
+  calculationMethod String   // "price_error" | "stockout" | "visibility"
+  calculatedAt      DateTime @default(now())
+  
+  @@index([shop])
+}
+
+// Extend Shop model:
+// trackCollections  Boolean @default(true)
+// trackDiscounts    Boolean @default(false) // Pro only
+// trackDomains      Boolean @default(false) // Pro only
+// trackAppPermissions Boolean @default(false) // Pro only
+```
+
+### V2 Feature Gates
+```typescript
+const FREE_LIMITS = {
+  maxProducts: 50,
+  historyDays: 7,
+  themeTracking: false,
+  collectionTracking: true,  // Free gets this
+  discountTracking: false,   // Pro only
+  domainTracking: false,     // Pro only
+  appPermissionTracking: false, // Pro only
+  instantAlerts: false,
+  moneySavedDashboard: false,
+};
+
+const PRO_LIMITS = {
+  maxProducts: Infinity,
+  historyDays: 90,
+  themeTracking: true,
+  collectionTracking: true,
+  discountTracking: true,
+  domainTracking: true,
+  appPermissionTracking: true,
+  instantAlerts: true,
+  moneySavedDashboard: true,
+};
+```
+
+### V2 Context-Rich Alerts (IMPORTANT)
+Every alert MUST include business context. Examples:
+- Price: "Blue Jacket dropped from $89 to $8.90 (90% decrease) — probably a typo"
+- Inventory: "Black Hoodie hit zero stock — you've been selling 8/day"
+- Visibility: "Red Sneakers went active → draft — no longer visible (sold 5 yesterday)"
+- Collection: "3 products removed from Featured collection"
+- Theme: "Theme 'Minimal v2' went live at 3:17 AM, replacing 'Dawn Custom'"
+- Discount: "Your Black Friday 50% off code was just deleted"
+- App: "Klaviyo just expanded permissions to access your orders"
+
+### V2 Linear Issues
+Project: StoreGuard V2
+BOT-5 through BOT-19 — see Linear for details.
