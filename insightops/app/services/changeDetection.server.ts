@@ -1,6 +1,14 @@
 import db from "../db.server";
 import { canTrackFeature, getLowStockThreshold, hasInstantAlerts, getShopAlertEmail } from "./shopService.server";
 import { sendInstantAlert } from "./emailService.server";
+import {
+  calculatePriceImportance,
+  isSignificantVisibilityTransition,
+  getVisibilityImportance,
+  shouldAlertInventoryZero as checkInventoryZero,
+  shouldAlertLowStock as checkLowStock,
+  formatVariantLabel,
+} from "./changeDetection.utils";
 
 /**
  * Change Detection Service for StoreGuard
@@ -31,13 +39,6 @@ interface ProductPayload {
     price: string;
     inventory_quantity: number;
   }>;
-}
-
-// Inventory update payload
-interface InventoryPayload {
-  inventory_item_id: number;
-  location_id: number;
-  available: number;
 }
 
 // Theme payload
@@ -204,15 +205,8 @@ export async function detectPriceChanges(
 
     // Explicit rule: only fire when price actually changed
     if (oldVariant && oldVariant.price !== newVariant.price) {
-      const variantLabel = newVariant.title === "Default Title"
-        ? product.title
-        : `${product.title} - ${newVariant.title}`;
-
-      // Determine importance based on change magnitude
-      const oldPrice = parseFloat(oldVariant.price) || 0;
-      const newPrice = parseFloat(newVariant.price) || 0;
-      const changePercent = oldPrice > 0 ? Math.abs(newPrice - oldPrice) / oldPrice * 100 : 100;
-      const importance = changePercent >= 50 ? "high" : changePercent >= 20 ? "medium" : "low";
+      const variantLabel = formatVariantLabel(product.title, newVariant.title);
+      const importance = calculatePriceImportance(oldVariant.price, newVariant.price);
 
       await createChangeEvent({
         shop,
@@ -275,27 +269,8 @@ export async function detectVisibilityChanges(
     return false;
   }
 
-  // Explicit visibility change rules:
-  // - active → draft (hidden from store)
-  // - active → archived (hidden from store)
-  // - draft → active (visible on store)
-  // - archived → active (visible on store)
-  // Note: We don't care about draft ↔ archived (both are hidden anyway)
-  const significantTransitions = [
-    ["active", "draft"],
-    ["active", "archived"],
-    ["draft", "active"],
-    ["archived", "active"],
-  ];
-
-  const isSignificant = significantTransitions.some(
-    ([from, to]) => oldSnapshot.status === from && product.status === to
-  );
-
-  if (oldSnapshot.status !== product.status && isSignificant) {
-    // Determine importance: going hidden = high, going visible = medium
-    const goingHidden = product.status === "draft" || product.status === "archived";
-    const importance = goingHidden ? "high" : "medium";
+  if (isSignificantVisibilityTransition(oldSnapshot.status, product.status)) {
+    const importance = getVisibilityImportance(product.status);
 
     await createChangeEvent({
       shop,
@@ -361,23 +336,9 @@ export async function detectInventoryZero(
     return false;
   }
 
-  // Explicit rule: Only alert on transition from >0 to exactly 0
-  // Ignore: 0 → 0 (no change), negative → 0 (weird edge case), null → 0 (unknown previous)
-  if (newQuantity !== 0) {
-    return false; // Not hitting zero
-  }
-
-  if (previousQuantity === null || previousQuantity === undefined) {
-    console.log(`[StoreGuard] No previous inventory for ${productTitle}, can't detect >0→0`);
+  if (!checkInventoryZero(newQuantity, previousQuantity)) {
     return false;
   }
-
-  if (previousQuantity <= 0) {
-    console.log(`[StoreGuard] Previous inventory was ${previousQuantity} for ${productTitle}, not a >0→0 transition`);
-    return false; // Was already at zero or negative
-  }
-
-  // Valid >0 → 0 transition detected!
 
   // Prevent duplicate alerts by checking recent events for this specific variant
   const recentAlert = await db.changeEvent.findFirst({
@@ -396,16 +357,12 @@ export async function detectInventoryZero(
     return false;
   }
 
-  const displayName = variantTitle && variantTitle !== "Default Title"
-    ? `${productTitle} - ${variantTitle}`
-    : productTitle;
-
   await createChangeEvent({
     shop,
     entityType: "variant",
     entityId: inventoryItemId,
     eventType: "inventory_zero",
-    resourceName: displayName,
+    resourceName: formatVariantLabel(productTitle, variantTitle),
     beforeValue: String(previousQuantity),
     afterValue: "0",
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
@@ -436,24 +393,8 @@ export async function detectLowStock(
     return false; // Shop doesn't exist or inventory tracking disabled
   }
 
-  // Skip if new quantity is zero (that's handled by detectInventoryZero)
-  if (newQuantity === 0) {
+  if (!checkLowStock(newQuantity, previousQuantity, threshold)) {
     return false;
-  }
-
-  // Skip if we don't know the previous quantity
-  if (previousQuantity === null || previousQuantity === undefined) {
-    console.log(`[StoreGuard] No previous inventory for ${productTitle}, can't detect low stock`);
-    return false;
-  }
-
-  // Rule: Only alert when crossing the threshold from above to at/below
-  // previousQuantity > threshold AND newQuantity <= threshold
-  const wasAboveThreshold = previousQuantity > threshold;
-  const isAtOrBelowThreshold = newQuantity <= threshold;
-
-  if (!wasAboveThreshold || !isAtOrBelowThreshold) {
-    return false; // Not a threshold crossing
   }
 
   // Check for recent low stock alert for this variant (24 hour dedup)
@@ -473,9 +414,7 @@ export async function detectLowStock(
     return false;
   }
 
-  const displayName = variantTitle && variantTitle !== "Default Title"
-    ? `${productTitle} - ${variantTitle}`
-    : productTitle;
+  const displayName = formatVariantLabel(productTitle, variantTitle);
 
   await createChangeEvent({
     shop,
