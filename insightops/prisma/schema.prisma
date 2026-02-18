@@ -48,6 +48,7 @@ model Shop {
   lowStockThreshold Int     @default(5) // Alert when inventory drops below this
   instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
   installedAt     DateTime  @default(now())
+  onboardedAt     DateTime? // When onboarding was completed (null = not onboarded)
   uninstalledAt   DateTime?
   // Stripe billing
   stripeCustomerId     String?  @unique // Stripe customer ID (cus_xxx)

@@ -309,3 +309,41 @@ export async function getShopAlertEmail(shopDomain: string): Promise<string | nu
 
   return shop?.alertEmail ?? null;
 }
+
+/**
+ * Check if a shop has completed onboarding.
+ */
+export async function isOnboarded(shopDomain: string): Promise<boolean> {
+  const shop = await db.shop.findUnique({
+    where: { shopifyDomain: shopDomain },
+    select: { onboardedAt: true },
+  });
+  return shop?.onboardedAt !== null && shop?.onboardedAt !== undefined;
+}
+
+/**
+ * Mark a shop as onboarded and save initial settings from the onboarding flow.
+ */
+export async function completeOnboarding(
+  shopDomain: string,
+  settings: {
+    alertEmail: string | null;
+    trackPrices: boolean;
+    trackVisibility: boolean;
+    trackInventory: boolean;
+    trackCollections: boolean;
+  }
+): Promise<void> {
+  await db.shop.update({
+    where: { shopifyDomain: shopDomain },
+    data: {
+      alertEmail: settings.alertEmail,
+      trackPrices: settings.trackPrices,
+      trackVisibility: settings.trackVisibility,
+      trackInventory: settings.trackInventory,
+      trackCollections: settings.trackCollections,
+      onboardedAt: new Date(),
+    },
+  });
+  console.log(`[StoreGuard] Onboarding completed for ${shopDomain}`);
+}
