@@ -33,6 +33,7 @@ export interface DigestSummary {
     inventory_low: DigestEvent[];
     inventory_zero: DigestEvent[];
     theme_publish: DigestEvent[];
+    app_permissions_changed: DigestEvent[];
   };
 }
 
@@ -116,6 +117,7 @@ export async function generateDigestForShop(shopDomain: string): Promise<DigestS
     inventory_low: [] as DigestEvent[],
     inventory_zero: [] as DigestEvent[],
     theme_publish: [] as DigestEvent[],
+    app_permissions_changed: [] as DigestEvent[],
   };
 
   let highPriorityCount = 0;
@@ -185,6 +187,7 @@ export function getEventIdsFromDigest(digest: DigestSummary): string[] {
     ...digest.eventsByType.inventory_low,
     ...digest.eventsByType.inventory_zero,
     ...digest.eventsByType.theme_publish,
+    ...digest.eventsByType.app_permissions_changed,
   ];
 
   return allEvents.map((e) => e.id);
@@ -205,6 +208,8 @@ export function formatEventType(eventType: string): string {
       return "Out of Stock";
     case "theme_publish":
       return "Theme Published";
+    case "app_permissions_changed":
+      return "App Permissions";
     default:
       return eventType;
   }
@@ -231,6 +236,12 @@ export function formatEventForEmail(event: DigestEvent): string {
       return `${event.resourceName}: now out of stock (was ${event.beforeValue} units) (${time})`;
     case "theme_publish":
       return `"${event.resourceName}" is now your live theme (${time})`;
+    case "app_permissions_changed": {
+      const parts: string[] = [];
+      if (event.afterValue && event.afterValue !== "(none)") parts.push(`Added: ${event.afterValue}`);
+      if (event.beforeValue && event.beforeValue !== "(none)") parts.push(`Removed: ${event.beforeValue}`);
+      return `${parts.join("; ")} (${time})`;
+    }
     default:
       return `${event.resourceName}: ${event.beforeValue} → ${event.afterValue} (${time})`;
   }

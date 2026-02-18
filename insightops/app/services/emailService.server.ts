@@ -127,6 +127,15 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
     ));
   }
 
+  // App permission changes
+  if (digest.eventsByType.app_permissions_changed.length > 0) {
+    sections.push(buildEventSection(
+      "🔐 App Permissions",
+      digest.eventsByType.app_permissions_changed,
+      "#e67e22" // orange
+    ));
+  }
+
   const sectionsHtml = sections.join("");
 
   // Summary stats
@@ -238,6 +247,12 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
       return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
+    case "app_permissions_changed": {
+      const parts: string[] = [];
+      if (event.afterValue && event.afterValue !== "(none)") parts.push(`Added: ${event.afterValue}`);
+      if (event.beforeValue && event.beforeValue !== "(none)") parts.push(`Removed: ${event.beforeValue}`);
+      return `${parts.join(" · ")} • ${time}`;
+    }
     default:
       return `${event.beforeValue} → ${event.afterValue} • ${time}`;
   }
@@ -283,6 +298,8 @@ function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): str
       return `🚨 Out of stock: ${event.resourceName} - ${shopName}`;
     case "theme_publish":
       return `🎨 Theme published: ${event.resourceName} - ${shopName}`;
+    case "app_permissions_changed":
+      return `🔐 App permissions changed - ${shopName}`;
     default:
       return `⚡ Change detected: ${event.resourceName} - ${shopName}`;
   }
@@ -298,6 +315,7 @@ function getAlertIcon(eventType: string): string {
     case "inventory_low": return "⚠️";
     case "inventory_zero": return "🚨";
     case "theme_publish": return "🎨";
+    case "app_permissions_changed": return "🔐";
     default: return "⚡";
   }
 }
@@ -312,6 +330,7 @@ function getAlertColor(eventType: string): string {
     case "inventory_low": return "#f97316";
     case "inventory_zero": return "#ef4444";
     case "theme_publish": return "#06b6d4";
+    case "app_permissions_changed": return "#e67e22";
     default: return "#6b7280";
   }
 }
@@ -353,6 +372,13 @@ function generateInstantAlertHtml(
     case "theme_publish":
       changeDescription = `"${event.resourceName}" is now your live theme`;
       break;
+    case "app_permissions_changed": {
+      const parts: string[] = [];
+      if (event.afterValue && event.afterValue !== "(none)") parts.push(`Added: ${event.afterValue}`);
+      if (event.beforeValue && event.beforeValue !== "(none)") parts.push(`Removed: ${event.beforeValue}`);
+      changeDescription = parts.join(". ") || "Permissions updated";
+      break;
+    }
     default:
       changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;
   }

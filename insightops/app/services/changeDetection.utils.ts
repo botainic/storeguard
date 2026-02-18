@@ -102,3 +102,45 @@ export function formatVariantLabel(
   }
   return `${productTitle} - ${variantTitle}`;
 }
+
+/**
+ * Diff two sets of scopes and return added/removed.
+ * Scopes are strings like "read_products", "write_orders", etc.
+ */
+export function diffScopes(
+  previousScopes: string[],
+  currentScopes: string[]
+): { added: string[]; removed: string[] } {
+  const prevSet = new Set(previousScopes.map((s) => s.trim()).filter(Boolean));
+  const currSet = new Set(currentScopes.map((s) => s.trim()).filter(Boolean));
+
+  const added = [...currSet].filter((s) => !prevSet.has(s)).sort();
+  const removed = [...prevSet].filter((s) => !currSet.has(s)).sort();
+
+  return { added, removed };
+}
+
+/**
+ * Determine importance of a scope change.
+ * Expansions (new permissions granted) are HIGH — potential security concern.
+ * Reductions (permissions removed) are MEDIUM — usually intentional cleanup.
+ */
+export function getScopeChangeImportance(
+  added: string[],
+  removed: string[]
+): "high" | "medium" {
+  return added.length > 0 ? "high" : "medium";
+}
+
+/**
+ * Format scope changes for human-readable display.
+ * Returns a concise summary like "+read_orders, +write_products, -read_themes"
+ */
+export function formatScopeChanges(
+  added: string[],
+  removed: string[]
+): { beforeValue: string; afterValue: string } {
+  const beforeValue = removed.length > 0 ? removed.join(", ") : "(none)";
+  const afterValue = added.length > 0 ? added.join(", ") : "(none)";
+  return { beforeValue, afterValue };
+}

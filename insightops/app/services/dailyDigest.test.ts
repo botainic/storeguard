@@ -37,6 +37,7 @@ function makeDigest(overrides: Partial<DigestSummary> = {}): DigestSummary {
       inventory_low: [],
       inventory_zero: [],
       theme_publish: [],
+      app_permissions_changed: [],
     },
     ...overrides,
   };
@@ -56,16 +57,18 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [makeEvent({ id: "iz-1" })],
         theme_publish: [makeEvent({ id: "tp-1" })],
+        app_permissions_changed: [makeEvent({ id: "ap-1" })],
       },
     });
 
     const ids = getEventIdsFromDigest(digest);
-    expect(ids).toHaveLength(5);
+    expect(ids).toHaveLength(6);
     expect(ids).toContain("pc-1");
     expect(ids).toContain("pc-2");
     expect(ids).toContain("vc-1");
     expect(ids).toContain("iz-1");
     expect(ids).toContain("tp-1");
+    expect(ids).toContain("ap-1");
   });
 
   it("should handle digest with events in only one category", () => {
@@ -76,6 +79,7 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [],
         theme_publish: [],
+        app_permissions_changed: [],
       },
     });
 
@@ -180,5 +184,51 @@ describe("formatEventForEmail", () => {
     const result = formatEventForEmail(event);
     expect(result).toContain("Dawn 2.0");
     expect(result).toContain("live theme");
+  });
+
+  it("should format app permissions changed event with added scopes", () => {
+    const event = makeEvent({
+      eventType: "app_permissions_changed",
+      entityType: "app",
+      resourceName: "App permissions changed (+2 added)",
+      beforeValue: "(none)",
+      afterValue: "read_orders, write_products",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Added: read_orders, write_products");
+  });
+
+  it("should format app permissions changed event with removed scopes", () => {
+    const event = makeEvent({
+      eventType: "app_permissions_changed",
+      entityType: "app",
+      resourceName: "App permissions changed (1 removed)",
+      beforeValue: "read_themes",
+      afterValue: "(none)",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Removed: read_themes");
+  });
+
+  it("should format app permissions changed event with both added and removed", () => {
+    const event = makeEvent({
+      eventType: "app_permissions_changed",
+      entityType: "app",
+      resourceName: "App permissions changed (+1 added, 1 removed)",
+      beforeValue: "read_themes",
+      afterValue: "write_orders",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Added: write_orders");
+    expect(result).toContain("Removed: read_themes");
+  });
+});
+
+describe("formatEventType - app permissions", () => {
+  it("should format app_permissions_changed", () => {
+    expect(formatEventType("app_permissions_changed")).toBe("App Permissions");
   });
 });

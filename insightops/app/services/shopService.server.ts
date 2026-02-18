@@ -7,6 +7,7 @@ export interface ShopSettings {
   trackVisibility: boolean;
   trackInventory: boolean;
   trackThemes: boolean;
+  trackAppPermissions: boolean;
   lowStockThreshold: number;
   instantAlerts: boolean;
 }
@@ -44,6 +45,7 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackAppPermissions: shop.trackAppPermissions,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -67,6 +69,7 @@ export async function getShopSettings(shopDomain: string): Promise<ShopSettings 
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackAppPermissions: shop.trackAppPermissions,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -95,6 +98,13 @@ export async function updateShopSettings(
     trackThemes = false;
   }
 
+  // App permission tracking is Pro-only
+  let trackAppPermissions = settings.trackAppPermissions ?? shop.trackAppPermissions;
+  if (shop.plan !== "pro" && trackAppPermissions) {
+    console.log(`[StoreGuard] Blocking trackAppPermissions for free plan: ${shopDomain}`);
+    trackAppPermissions = false;
+  }
+
   // Instant alerts are Pro-only
   let instantAlerts = settings.instantAlerts ?? shop.instantAlerts;
   if (shop.plan !== "pro" && instantAlerts) {
@@ -115,6 +125,7 @@ export async function updateShopSettings(
       trackVisibility: settings.trackVisibility ?? shop.trackVisibility,
       trackInventory: settings.trackInventory ?? shop.trackInventory,
       trackThemes,
+      trackAppPermissions,
       lowStockThreshold,
       instantAlerts,
     },
@@ -129,6 +140,7 @@ export async function updateShopSettings(
     trackVisibility: updated.trackVisibility,
     trackInventory: updated.trackInventory,
     trackThemes: updated.trackThemes,
+    trackAppPermissions: updated.trackAppPermissions,
     lowStockThreshold: updated.lowStockThreshold,
     instantAlerts: updated.instantAlerts,
   };
@@ -173,6 +185,7 @@ export async function downgradeShopToFree(shopDomain: string): Promise<void> {
     data: {
       plan: "free",
       trackThemes: false, // Disable Pro-only features
+      trackAppPermissions: false, // Disable Pro-only features
       instantAlerts: false, // Disable Pro-only features
     },
   });
@@ -195,7 +208,7 @@ export async function isProPlan(shopDomain: string): Promise<boolean> {
  */
 export async function canTrackFeature(
   shopDomain: string,
-  feature: "prices" | "visibility" | "inventory" | "themes"
+  feature: "prices" | "visibility" | "inventory" | "themes" | "appPermissions"
 ): Promise<boolean> {
   const shop = await db.shop.findUnique({
     where: { shopifyDomain: shopDomain },
@@ -212,6 +225,8 @@ export async function canTrackFeature(
       return shop.trackInventory;
     case "themes":
       return shop.plan === "pro" && shop.trackThemes;
+    case "appPermissions":
+      return shop.plan === "pro" && shop.trackAppPermissions;
     default:
       return false;
   }

@@ -41,6 +41,7 @@ model Shop {
   trackVisibility Boolean   @default(true)
   trackInventory  Boolean   @default(true)
   trackThemes     Boolean   @default(false) // Pro only
+  trackAppPermissions Boolean @default(false) // Pro only - track app scope changes
   lowStockThreshold Int     @default(5) // Alert when inventory drops below this
   instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
   installedAt     DateTime  @default(now())
@@ -54,9 +55,9 @@ model Shop {
 model ChangeEvent {
   id           String    @id @default(uuid())
   shop         String    // Store URL
-  entityType   String    // "product" | "variant" | "theme"
+  entityType   String    // "product" | "variant" | "theme" | "app"
   entityId     String    // Shopify ID of the entity
-  eventType    String    // "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish"
+  eventType    String    // "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish" | "app_permissions_changed"
   resourceName String    // Product/Theme title for display (human-readable)
   beforeValue  String?   // Previous value (JSON or simple string)
   afterValue   String?   // New value (JSON or simple string)

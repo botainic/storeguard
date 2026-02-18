@@ -6,6 +6,9 @@ import {
   shouldAlertInventoryZero,
   shouldAlertLowStock,
   formatVariantLabel,
+  diffScopes,
+  getScopeChangeImportance,
+  formatScopeChanges,
 } from "./changeDetection.utils";
 
 describe("calculatePriceImportance", () => {
@@ -153,5 +156,115 @@ describe("formatVariantLabel", () => {
 
   it("should return product title for null variant title", () => {
     expect(formatVariantLabel("Widget", null)).toBe("Widget");
+  });
+});
+
+describe("diffScopes", () => {
+  it("should detect added scopes", () => {
+    const result = diffScopes(
+      ["read_products"],
+      ["read_products", "read_orders"]
+    );
+    expect(result.added).toEqual(["read_orders"]);
+    expect(result.removed).toEqual([]);
+  });
+
+  it("should detect removed scopes", () => {
+    const result = diffScopes(
+      ["read_products", "read_orders"],
+      ["read_products"]
+    );
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual(["read_orders"]);
+  });
+
+  it("should detect both added and removed scopes", () => {
+    const result = diffScopes(
+      ["read_products", "read_themes"],
+      ["read_products", "write_orders"]
+    );
+    expect(result.added).toEqual(["write_orders"]);
+    expect(result.removed).toEqual(["read_themes"]);
+  });
+
+  it("should return empty arrays when scopes are identical", () => {
+    const result = diffScopes(
+      ["read_products", "read_orders"],
+      ["read_products", "read_orders"]
+    );
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+  });
+
+  it("should handle empty previous scopes", () => {
+    const result = diffScopes([], ["read_products", "read_orders"]);
+    expect(result.added).toEqual(["read_orders", "read_products"]);
+    expect(result.removed).toEqual([]);
+  });
+
+  it("should handle empty current scopes", () => {
+    const result = diffScopes(["read_products", "read_orders"], []);
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual(["read_orders", "read_products"]);
+  });
+
+  it("should handle whitespace in scope strings", () => {
+    const result = diffScopes(
+      [" read_products ", "read_orders"],
+      ["read_products", " write_themes "]
+    );
+    expect(result.added).toEqual(["write_themes"]);
+    expect(result.removed).toEqual(["read_orders"]);
+  });
+
+  it("should ignore empty strings", () => {
+    const result = diffScopes(
+      ["read_products", ""],
+      ["read_products", "", "read_orders"]
+    );
+    expect(result.added).toEqual(["read_orders"]);
+    expect(result.removed).toEqual([]);
+  });
+
+  it("should sort results alphabetically", () => {
+    const result = diffScopes(
+      [],
+      ["write_orders", "read_products", "read_customers"]
+    );
+    expect(result.added).toEqual(["read_customers", "read_products", "write_orders"]);
+  });
+});
+
+describe("getScopeChangeImportance", () => {
+  it("should return high when scopes are added (expansion)", () => {
+    expect(getScopeChangeImportance(["read_orders"], [])).toBe("high");
+  });
+
+  it("should return high when both added and removed", () => {
+    expect(getScopeChangeImportance(["read_orders"], ["read_themes"])).toBe("high");
+  });
+
+  it("should return medium when only scopes are removed (reduction)", () => {
+    expect(getScopeChangeImportance([], ["read_orders"])).toBe("medium");
+  });
+});
+
+describe("formatScopeChanges", () => {
+  it("should format added scopes", () => {
+    const result = formatScopeChanges(["read_orders", "write_products"], []);
+    expect(result.beforeValue).toBe("(none)");
+    expect(result.afterValue).toBe("read_orders, write_products");
+  });
+
+  it("should format removed scopes", () => {
+    const result = formatScopeChanges([], ["read_themes"]);
+    expect(result.beforeValue).toBe("read_themes");
+    expect(result.afterValue).toBe("(none)");
+  });
+
+  it("should format both added and removed", () => {
+    const result = formatScopeChanges(["write_orders"], ["read_themes"]);
+    expect(result.beforeValue).toBe("read_themes");
+    expect(result.afterValue).toBe("write_orders");
   });
 });

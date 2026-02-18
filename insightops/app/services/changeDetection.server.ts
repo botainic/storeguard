@@ -8,6 +8,9 @@ import {
   shouldAlertInventoryZero as checkInventoryZero,
   shouldAlertLowStock as checkLowStock,
   formatVariantLabel,
+  diffScopes,
+  getScopeChangeImportance,
+  formatScopeChanges,
 } from "./changeDetection.utils";
 
 /**
@@ -104,9 +107,9 @@ async function updateProductSnapshot(
  */
 async function createChangeEvent(data: {
   shop: string;
-  entityType: "product" | "variant" | "theme";
+  entityType: "product" | "variant" | "theme" | "app";
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
+  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish" | "app_permissions_changed";
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -466,6 +469,55 @@ export async function recordThemePublish(
     afterValue: "main",
     webhookId: `${webhookId}-theme`,
     importance: "high", // Theme publish is always important
+  });
+
+  return true;
+}
+
+/**
+ * Record an app permission (scope) change event.
+ * The app/scopes_update webhook fires when any installed app changes its permissions.
+ * Importance: HIGH for scope expansions (new permissions), MEDIUM for reductions.
+ */
+export async function recordAppPermissionsChange(
+  shop: string,
+  previousScopes: string[],
+  currentScopes: string[],
+  webhookId: string
+): Promise<boolean> {
+  // Check if shop wants to track app permissions (Pro only)
+  if (!await canTrackFeature(shop, "appPermissions")) {
+    console.log(`[StoreGuard] App permission tracking disabled for ${shop} (Free plan or disabled)`);
+    return false;
+  }
+
+  const { added, removed } = diffScopes(previousScopes, currentScopes);
+
+  // No actual change — Shopify may send no-op updates
+  if (added.length === 0 && removed.length === 0) {
+    console.log(`[StoreGuard] No scope changes detected for ${shop}, skipping`);
+    return false;
+  }
+
+  const importance = getScopeChangeImportance(added, removed);
+  const { beforeValue, afterValue } = formatScopeChanges(added, removed);
+
+  // Build a human-readable resource name
+  const parts: string[] = [];
+  if (added.length > 0) parts.push(`+${added.length} added`);
+  if (removed.length > 0) parts.push(`${removed.length} removed`);
+  const resourceName = `App permissions changed (${parts.join(", ")})`;
+
+  await createChangeEvent({
+    shop,
+    entityType: "app",
+    entityId: "app-scopes",
+    eventType: "app_permissions_changed",
+    resourceName,
+    beforeValue,
+    afterValue,
+    webhookId: `${webhookId}-app-scopes`,
+    importance,
   });
 
   return true;
