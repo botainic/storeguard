@@ -18,6 +18,7 @@ function makeEvent(overrides: Partial<DigestEvent> = {}): DigestEvent {
     afterValue: "$15.00",
     detectedAt: new Date("2026-02-17T10:30:00Z"),
     importance: "medium",
+    contextData: null,
     ...overrides,
   };
 }

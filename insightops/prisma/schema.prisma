@@ -66,6 +66,7 @@ model ChangeEvent {
   importance   String    @default("medium") // "high" | "medium" | "low"
   groupId      String?   // For grouping related changes (e.g. bulk edit session)
   webhookId    String    @unique // Deduplication
+  contextData  String?   // JSON: sales velocity, revenue impact, business context
 
   @@index([shop])
   @@index([shop, detectedAt])

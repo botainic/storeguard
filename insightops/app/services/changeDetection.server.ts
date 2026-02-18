@@ -9,6 +9,8 @@ import {
   shouldAlertLowStock as checkLowStock,
   formatVariantLabel,
 } from "./changeDetection.utils";
+import { getProductSalesVelocity } from "./salesVelocity.server";
+import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
 
 /**
  * Change Detection Service for StoreGuard
@@ -114,6 +116,7 @@ async function createChangeEvent(data: {
   source?: "webhook" | "sync_job" | "manual";
   importance?: "high" | "medium" | "low";
   groupId?: string;
+  contextData?: string | null;
 }): Promise<void> {
   try {
     const event = await db.changeEvent.create({
@@ -129,6 +132,7 @@ async function createChangeEvent(data: {
         source: data.source ?? "webhook",
         importance: data.importance ?? "medium",
         groupId: data.groupId,
+        contextData: data.contextData ?? null,
       },
     });
     console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
@@ -147,6 +151,7 @@ async function createChangeEvent(data: {
             afterValue: data.afterValue,
             importance: data.importance ?? "medium",
             detectedAt: event.detectedAt,
+            contextData: data.contextData ?? null,
           },
           data.shop,
           alertEmail
@@ -199,6 +204,14 @@ export async function detectPriceChanges(
 
   let changesDetected = 0;
 
+  // Fetch sales velocity for business context (best-effort, non-blocking)
+  let velocity: Awaited<ReturnType<typeof getProductSalesVelocity>> = null;
+  try {
+    velocity = await getProductSalesVelocity(shop, productId);
+  } catch {
+    // Non-critical — proceed without velocity context
+  }
+
   // Compare each variant's price - only alert when price_before !== price_after
   for (const newVariant of product.variants) {
     const oldVariant = oldSnapshot.variants.find(v => v.id === String(newVariant.id));
@@ -207,6 +220,16 @@ export async function detectPriceChanges(
     if (oldVariant && oldVariant.price !== newVariant.price) {
       const variantLabel = formatVariantLabel(product.title, newVariant.title);
       const importance = calculatePriceImportance(oldVariant.price, newVariant.price);
+
+      // Build context data with sales velocity
+      const priceDiff = Math.abs(parseFloat(newVariant.price) - parseFloat(oldVariant.price));
+      const velocityContext = formatVelocityContext(velocity);
+      const revenueImpact = estimateRevenueImpact(velocity, "price_error", {
+        priceDifference: priceDiff,
+      });
+      const contextData = (velocityContext || revenueImpact !== null)
+        ? JSON.stringify({ velocityContext, revenueImpact })
+        : null;
 
       await createChangeEvent({
         shop,
@@ -218,6 +241,7 @@ export async function detectPriceChanges(
         afterValue: `$${newVariant.price}`,
         webhookId: `${webhookId}-price-${newVariant.id}`,
         importance: importance as "high" | "medium" | "low",
+        contextData,
       });
       changesDetected++;
     }
@@ -272,6 +296,20 @@ export async function detectVisibilityChanges(
   if (isSignificantVisibilityTransition(oldSnapshot.status, product.status)) {
     const importance = getVisibilityImportance(product.status);
 
+    // Fetch sales velocity for business context (best-effort)
+    let velocity: Awaited<ReturnType<typeof getProductSalesVelocity>> = null;
+    try {
+      velocity = await getProductSalesVelocity(shop, productId);
+    } catch {
+      // Non-critical
+    }
+
+    const velocityContext = formatVelocityContext(velocity);
+    const revenueImpact = estimateRevenueImpact(velocity, "visibility", {});
+    const contextData = (velocityContext || revenueImpact !== null)
+      ? JSON.stringify({ velocityContext, revenueImpact })
+      : null;
+
     await createChangeEvent({
       shop,
       entityType: "product",
@@ -282,6 +320,7 @@ export async function detectVisibilityChanges(
       afterValue: product.status,
       webhookId: `${webhookId}-status`,
       importance,
+      contextData,
     });
 
     // Update snapshot
@@ -357,6 +396,20 @@ export async function detectInventoryZero(
     return false;
   }
 
+  // Fetch sales velocity for business context (best-effort)
+  let velocity: Awaited<ReturnType<typeof getProductSalesVelocity>> = null;
+  try {
+    velocity = await getProductSalesVelocity(shop, productId);
+  } catch {
+    // Non-critical
+  }
+
+  const velocityContext = formatVelocityContext(velocity);
+  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
+  const contextData = (velocityContext || revenueImpact !== null)
+    ? JSON.stringify({ velocityContext, revenueImpact })
+    : null;
+
   await createChangeEvent({
     shop,
     entityType: "variant",
@@ -367,6 +420,7 @@ export async function detectInventoryZero(
     afterValue: "0",
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
     importance: "high", // Out of stock is always high importance
+    contextData,
   });
 
   return true;
@@ -416,6 +470,20 @@ export async function detectLowStock(
 
   const displayName = formatVariantLabel(productTitle, variantTitle);
 
+  // Fetch sales velocity for business context (best-effort)
+  let velocity: Awaited<ReturnType<typeof getProductSalesVelocity>> = null;
+  try {
+    velocity = await getProductSalesVelocity(shop, productId);
+  } catch {
+    // Non-critical
+  }
+
+  const velocityContext = formatVelocityContext(velocity);
+  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
+  const contextData = (velocityContext || revenueImpact !== null)
+    ? JSON.stringify({ velocityContext, revenueImpact })
+    : null;
+
   await createChangeEvent({
     shop,
     entityType: "variant",
@@ -426,6 +494,7 @@ export async function detectLowStock(
     afterValue: String(newQuantity),
     webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
     importance: "medium", // Low stock is medium importance (zero is high)
+    contextData,
   });
 
   console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} (threshold: ${threshold})`);

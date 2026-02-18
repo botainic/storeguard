@@ -15,6 +15,7 @@ interface ChangeEvent {
   detectedAt: string;
   source: string;
   importance: string;
+  contextData: string | null;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -190,6 +191,30 @@ export default function RecentChanges() {
                     )}
                   </div>
                 )}
+
+                {event.contextData && (() => {
+                  try {
+                    const ctx = JSON.parse(event.contextData) as {
+                      velocityContext?: string | null;
+                      revenueImpact?: number | null;
+                    };
+                    if (!ctx.velocityContext && ctx.revenueImpact === null) return null;
+                    return (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
+                        {ctx.velocityContext && (
+                          <span style={{ marginRight: 8 }}>{ctx.velocityContext}</span>
+                        )}
+                        {ctx.revenueImpact !== null && ctx.revenueImpact !== undefined && (
+                          <span style={{ color: "#dc2626", fontWeight: 500 }}>
+                            ~${ctx.revenueImpact.toFixed(2)}/hr impact
+                          </span>
+                        )}
+                      </div>
+                    );
+                  } catch {
+                    return null;
+                  }
+                })()}
 
               </div>
             );
