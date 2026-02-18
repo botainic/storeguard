@@ -60,20 +60,21 @@ async function getProductSnapshot(shop: string, productId: string): Promise<{
 } | null> {
   const snapshot = await db.productSnapshot.findUnique({
     where: { shop_id: { shop, id: productId } },
+    include: { variants: true },
   });
 
   if (!snapshot) return null;
 
-  try {
-    const variants = JSON.parse(snapshot.variants) as VariantSnapshot[];
-    return {
-      title: snapshot.title,
-      status: snapshot.status,
-      variants,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    title: snapshot.title,
+    status: snapshot.status,
+    variants: snapshot.variants.map(v => ({
+      id: v.shopifyVariantId,
+      title: v.title,
+      price: v.price,
+      inventoryQuantity: v.inventoryQuantity,
+    })),
+  };
 }
 
 /**
@@ -84,20 +85,44 @@ async function updateProductSnapshot(
   productId: string,
   data: { title: string; status: string; variants: VariantSnapshot[] }
 ): Promise<void> {
-  await db.productSnapshot.upsert({
-    where: { shop_id: { shop, id: productId } },
-    create: {
-      id: productId,
-      shop,
-      title: data.title,
-      status: data.status,
-      variants: JSON.stringify(data.variants),
-    },
-    update: {
-      title: data.title,
-      status: data.status,
-      variants: JSON.stringify(data.variants),
-    },
+  await db.$transaction(async (tx) => {
+    await tx.productSnapshot.upsert({
+      where: { shop_id: { shop, id: productId } },
+      create: {
+        id: productId,
+        shop,
+        title: data.title,
+        status: data.status,
+      },
+      update: {
+        title: data.title,
+        status: data.status,
+      },
+    });
+
+    for (const v of data.variants) {
+      await tx.variantSnapshot.upsert({
+        where: {
+          productSnapshotId_shopifyVariantId: {
+            productSnapshotId: productId,
+            shopifyVariantId: String(v.id),
+          },
+        },
+        create: {
+          productSnapshotId: productId,
+          shop,
+          shopifyVariantId: String(v.id),
+          title: v.title,
+          price: String(v.price),
+          inventoryQuantity: v.inventoryQuantity,
+        },
+        update: {
+          title: v.title,
+          price: String(v.price),
+          inventoryQuantity: v.inventoryQuantity,
+        },
+      });
+    }
   });
 }
 

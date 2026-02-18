@@ -889,20 +889,17 @@ async function processInventoryUpdate(
 
     // If no ChangeEvent, fall back to ProductSnapshot
     if (oldAvailable === null && productId && variantId) {
-      const snapshot = await db.productSnapshot.findUnique({
-        where: { shop_id: { shop, id: productId } },
+      const matchingVariant = await db.variantSnapshot.findUnique({
+        where: {
+          productSnapshotId_shopifyVariantId: {
+            productSnapshotId: productId,
+            shopifyVariantId: variantId,
+          },
+        },
       });
-      if (snapshot?.variants) {
-        try {
-          const variants = JSON.parse(snapshot.variants) as Array<{ id: string; inventoryQuantity: number }>;
-          const matchingVariant = variants.find(v => v.id === variantId);
-          if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
-            oldAvailable = matchingVariant.inventoryQuantity;
-            console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from ProductSnapshot for ${productTitle}`);
-          }
-        } catch {
-          // Invalid JSON in snapshot
-        }
+      if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
+        oldAvailable = matchingVariant.inventoryQuantity;
+        console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from VariantSnapshot for ${productTitle}`);
       }
     }
   } catch (prevError) {
@@ -947,39 +944,39 @@ async function processInventoryUpdate(
   // Update or create ProductSnapshot with TOTAL inventory (keeps snapshot current for future comparisons)
   if (productId && variantId) {
     try {
-      const snapshot = await db.productSnapshot.findUnique({
+      // Ensure ProductSnapshot exists
+      await db.productSnapshot.upsert({
         where: { shop_id: { shop, id: productId } },
+        create: {
+          id: productId,
+          shop,
+          title: productTitle,
+          status: "active",
+        },
+        update: {},
       });
-      if (snapshot?.variants) {
-        // Update existing snapshot
-        const variants = JSON.parse(snapshot.variants) as Array<{ id: string; title: string; price: string; inventoryQuantity: number }>;
-        const variantIndex = variants.findIndex(v => v.id === variantId);
-        if (variantIndex >= 0) {
-          variants[variantIndex].inventoryQuantity = totalQuantity;
-          await db.productSnapshot.update({
-            where: { shop_id: { shop, id: productId } },
-            data: { variants: JSON.stringify(variants) },
-          });
-          console.log(`[StoreGuard] Updated ProductSnapshot inventory for ${productTitle}: ${totalQuantity} (total across locations)`);
-        }
-      } else if (!snapshot) {
-        // No snapshot exists - create a minimal one for future tracking
-        await db.productSnapshot.create({
-          data: {
-            id: productId,
-            shop,
-            title: productTitle,
-            status: "active", // Default assumption
-            variants: JSON.stringify([{
-              id: variantId,
-              title: variantTitle || "Default Title",
-              price: "0.00",
-              inventoryQuantity: totalQuantity,
-            }]),
+
+      // Upsert the specific variant — atomic, no read-modify-write
+      await db.variantSnapshot.upsert({
+        where: {
+          productSnapshotId_shopifyVariantId: {
+            productSnapshotId: productId,
+            shopifyVariantId: variantId,
           },
-        });
-        console.log(`[StoreGuard] Created ProductSnapshot from inventory webhook for ${productTitle}`);
-      }
+        },
+        create: {
+          productSnapshotId: productId,
+          shop,
+          shopifyVariantId: variantId,
+          title: variantTitle || "Default Title",
+          price: "0.00",
+          inventoryQuantity: totalQuantity,
+        },
+        update: {
+          inventoryQuantity: totalQuantity,
+        },
+      });
+      console.log(`[StoreGuard] Updated VariantSnapshot inventory for ${productTitle}: ${totalQuantity} (total across locations)`);
     } catch (snapshotError) {
       console.error(`[StoreGuard] Failed to update ProductSnapshot inventory:`, snapshotError);
     }

@@ -457,20 +457,44 @@ export async function syncProducts(
           inventoryQuantity: v.inventoryQuantity ?? 0,
         }));
 
-        await db.productSnapshot.upsert({
-          where: { shop_id: { shop, id: numericId } },
-          create: {
-            id: numericId,
-            shop,
-            title: product.title,
-            status: product.status.toLowerCase(),
-            variants: JSON.stringify(productSnapshotVariants),
-          },
-          update: {
-            title: product.title,
-            status: product.status.toLowerCase(),
-            variants: JSON.stringify(productSnapshotVariants),
-          },
+        await db.$transaction(async (tx) => {
+          await tx.productSnapshot.upsert({
+            where: { shop_id: { shop, id: numericId } },
+            create: {
+              id: numericId,
+              shop,
+              title: product.title,
+              status: product.status.toLowerCase(),
+            },
+            update: {
+              title: product.title,
+              status: product.status.toLowerCase(),
+            },
+          });
+
+          for (const v of productSnapshotVariants) {
+            await tx.variantSnapshot.upsert({
+              where: {
+                productSnapshotId_shopifyVariantId: {
+                  productSnapshotId: numericId,
+                  shopifyVariantId: String(v.id),
+                },
+              },
+              create: {
+                productSnapshotId: numericId,
+                shop,
+                shopifyVariantId: String(v.id),
+                title: v.title,
+                price: String(v.price),
+                inventoryQuantity: v.inventoryQuantity,
+              },
+              update: {
+                title: v.title,
+                price: String(v.price),
+                inventoryQuantity: v.inventoryQuantity,
+              },
+            });
+          }
         });
 
         // Build a synthetic ProductNode with all variants for snapshot creation

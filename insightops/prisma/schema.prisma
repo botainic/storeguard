@@ -88,11 +88,26 @@ model ProductSnapshot {
   shop      String
   title     String
   status    String   // "active" | "draft" | "archived"
-  variants  String   // JSON: [{id, title, price, inventoryQuantity}]
   updatedAt DateTime @updatedAt
+  variants  VariantSnapshot[]
 
   @@unique([shop, id])
   @@index([shop])
+}
+
+// Individual variant snapshot for change detection (normalized from JSON blob)
+model VariantSnapshot {
+  id                 String          @id @default(uuid())
+  shopifyVariantId   String          // Shopify variant ID (numeric string)
+  productSnapshotId  String          // FK to ProductSnapshot
+  shop               String          // Denormalized for efficient queries
+  title              String
+  price              String
+  inventoryQuantity  Int             @default(0)
+  productSnapshot    ProductSnapshot @relation(fields: [productSnapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([productSnapshotId, shopifyVariantId])
+  @@index([shop, shopifyVariantId])
 }
 
 // Lightweight product cache for resolving names on delete
