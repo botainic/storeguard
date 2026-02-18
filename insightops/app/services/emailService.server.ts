@@ -227,19 +227,34 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
     hour12: true,
   });
 
+  // Parse context data for sales velocity
+  let velocitySuffix = "";
+  if (event.contextData) {
+    try {
+      const ctx = JSON.parse(event.contextData) as {
+        velocityContext?: string | null;
+      };
+      if (ctx.velocityContext) {
+        velocitySuffix = ` — ${ctx.velocityContext}`;
+      }
+    } catch {
+      // Ignore invalid context
+    }
+  }
+
   switch (event.eventType) {
     case "price_change":
-      return `${event.beforeValue} → ${event.afterValue} • ${time}`;
+      return `${event.beforeValue} → ${event.afterValue}${velocitySuffix} • ${time}`;
     case "visibility_change":
-      return `${event.beforeValue} → ${event.afterValue} • ${time}`;
+      return `${event.beforeValue} → ${event.afterValue}${velocitySuffix} • ${time}`;
     case "inventory_low":
-      return `Stock dropped to ${event.afterValue} units (was ${event.beforeValue}) • ${time}`;
+      return `Stock dropped to ${event.afterValue} units (was ${event.beforeValue})${velocitySuffix} • ${time}`;
     case "inventory_zero":
-      return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
+      return `Now out of stock (was ${event.beforeValue} units)${velocitySuffix} • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
     default:
-      return `${event.beforeValue} → ${event.afterValue} • ${time}`;
+      return `${event.beforeValue} → ${event.afterValue}${velocitySuffix} • ${time}`;
   }
 }
 
@@ -266,6 +281,7 @@ interface InstantAlertEvent {
   afterValue: string | null;
   importance: string;
   detectedAt: Date;
+  contextData?: string | null;
 }
 
 /**
@@ -335,6 +351,22 @@ function generateInstantAlertHtml(
     hour12: true,
   });
 
+  // Parse context data for sales velocity
+  let velocityContext: string | null = null;
+  let revenueImpact: number | null = null;
+  if (event.contextData) {
+    try {
+      const ctx = JSON.parse(event.contextData) as {
+        velocityContext?: string | null;
+        revenueImpact?: number | null;
+      };
+      velocityContext = ctx.velocityContext ?? null;
+      revenueImpact = ctx.revenueImpact ?? null;
+    } catch {
+      // Invalid context data
+    }
+  }
+
   // Build change description
   let changeDescription = "";
   switch (event.eventType) {
@@ -355,6 +387,11 @@ function generateInstantAlertHtml(
       break;
     default:
       changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;
+  }
+
+  // Append sales velocity context
+  if (velocityContext) {
+    changeDescription += ` — ${velocityContext}`;
   }
 
   return `
@@ -382,6 +419,7 @@ function generateInstantAlertHtml(
       <p style="margin: 0 0 16px; color: #374151; font-size: 15px;">
         ${changeDescription}
       </p>
+      ${revenueImpact !== null ? `<p style="margin: 0 0 16px; color: #dc2626; font-size: 14px; font-weight: 500;">Estimated impact: ~$${revenueImpact.toFixed(2)}/hr until fixed</p>` : ""}
       <p style="margin: 0; color: #9ca3af; font-size: 13px;">
         Detected at ${time}
       </p>

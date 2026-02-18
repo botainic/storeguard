@@ -17,6 +17,7 @@ export interface DigestEvent {
   afterValue: string | null;
   detectedAt: Date;
   importance: string;
+  contextData: string | null;
 }
 
 export interface DigestSummary {
@@ -131,6 +132,7 @@ export async function generateDigestForShop(shopDomain: string): Promise<DigestS
       afterValue: event.afterValue,
       detectedAt: event.detectedAt,
       importance: event.importance,
+      contextData: event.contextData,
     };
 
     if (event.importance === "high") {
