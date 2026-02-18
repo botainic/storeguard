@@ -689,22 +689,19 @@ async function processInventoryUpdate(
       oldAvailable = prevDiff.available;
     }
 
-    // If no EventLog, fall back to ProductSnapshot
+    // If no EventLog, fall back to VariantSnapshot
     if (oldAvailable === null && productId && variantId) {
-      const snapshot = await db.productSnapshot.findUnique({
-        where: { shop_id: { shop, id: productId } },
+      const variantSnap = await db.variantSnapshot.findUnique({
+        where: {
+          productSnapshotId_variantId: {
+            productSnapshotId: productId,
+            variantId: variantId,
+          },
+        },
       });
-      if (snapshot?.variants) {
-        try {
-          const variants = JSON.parse(snapshot.variants) as Array<{ id: string; inventoryQuantity: number }>;
-          const matchingVariant = variants.find(v => v.id === variantId);
-          if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
-            oldAvailable = matchingVariant.inventoryQuantity;
-            console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from ProductSnapshot for ${productTitle}`);
-          }
-        } catch {
-          // Invalid JSON in snapshot
-        }
+      if (variantSnap) {
+        oldAvailable = variantSnap.inventoryQuantity;
+        console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from VariantSnapshot for ${productTitle}`);
       }
     }
   } catch (prevError) {
@@ -741,45 +738,55 @@ async function processInventoryUpdate(
     }
   }
 
-  // Update or create ProductSnapshot with inventory (keeps snapshot current for future comparisons)
+  // Update or create VariantSnapshot with inventory (keeps snapshot current for future comparisons)
   if (productId && variantId) {
     try {
       const snapshot = await db.productSnapshot.findUnique({
         where: { shop_id: { shop, id: productId } },
       });
-      if (snapshot?.variants) {
-        // Update existing snapshot
-        const variants = JSON.parse(snapshot.variants) as Array<{ id: string; title: string; price: string; inventoryQuantity: number }>;
-        const variantIndex = variants.findIndex(v => v.id === variantId);
-        if (variantIndex >= 0) {
-          variants[variantIndex].inventoryQuantity = payload.available;
-          await db.productSnapshot.update({
-            where: { shop_id: { shop, id: productId } },
-            data: { variants: JSON.stringify(variants) },
-          });
-          console.log(`[StoreGuard] Updated ProductSnapshot inventory for ${productTitle}: ${payload.available}`);
-        }
-      } else if (!snapshot) {
-        // No snapshot exists - create a minimal one for future tracking
-        // This ensures the NEXT inventory change can be detected
+      if (snapshot) {
+        // Atomic single-variant update — no read-modify-write race condition
+        await db.variantSnapshot.upsert({
+          where: {
+            productSnapshotId_variantId: {
+              productSnapshotId: productId,
+              variantId: variantId,
+            },
+          },
+          create: {
+            productSnapshotId: productId,
+            variantId: variantId,
+            title: variantTitle || "Default Title",
+            price: "0.00",
+            inventoryQuantity: payload.available,
+          },
+          update: {
+            inventoryQuantity: payload.available,
+          },
+        });
+        console.log(`[StoreGuard] Updated VariantSnapshot inventory for ${productTitle}: ${payload.available}`);
+      } else {
+        // No snapshot exists - create product + variant for future tracking
         await db.productSnapshot.create({
           data: {
             id: productId,
             shop,
             title: productTitle,
             status: "active", // Default assumption
-            variants: JSON.stringify([{
-              id: variantId,
-              title: variantTitle || "Default Title",
-              price: "0.00",
-              inventoryQuantity: payload.available,
-            }]),
+            variants: {
+              create: {
+                variantId: variantId,
+                title: variantTitle || "Default Title",
+                price: "0.00",
+                inventoryQuantity: payload.available,
+              },
+            },
           },
         });
         console.log(`[StoreGuard] Created ProductSnapshot from inventory webhook for ${productTitle}`);
       }
     } catch (snapshotError) {
-      console.error(`[StoreGuard] Failed to update ProductSnapshot inventory:`, snapshotError);
+      console.error(`[StoreGuard] Failed to update VariantSnapshot inventory:`, snapshotError);
     }
   }
 

@@ -240,29 +240,52 @@ export async function syncProducts(
           },
         });
 
-        // === StoreGuard: Create ProductSnapshot for change detection ===
+        // === StoreGuard: Create ProductSnapshot + VariantSnapshots for change detection ===
         // This is what changeDetection.server.ts uses to compare before/after
-        const productSnapshotVariants = product.variants.edges.map((v) => ({
-          id: v.node.id.split("/").pop() || v.node.id,
+        const variantData = product.variants.edges.map((v) => ({
+          variantId: v.node.id.split("/").pop() || v.node.id,
           title: v.node.title,
           price: v.node.price,
           inventoryQuantity: v.node.inventoryQuantity ?? 0,
         }));
 
-        await db.productSnapshot.upsert({
-          where: { shop_id: { shop, id: numericId } },
-          create: {
-            id: numericId,
-            shop,
-            title: product.title,
-            status: product.status.toLowerCase(),
-            variants: JSON.stringify(productSnapshotVariants),
-          },
-          update: {
-            title: product.title,
-            status: product.status.toLowerCase(),
-            variants: JSON.stringify(productSnapshotVariants),
-          },
+        await db.$transaction(async (tx) => {
+          await tx.productSnapshot.upsert({
+            where: { shop_id: { shop, id: numericId } },
+            create: {
+              id: numericId,
+              shop,
+              title: product.title,
+              status: product.status.toLowerCase(),
+            },
+            update: {
+              title: product.title,
+              status: product.status.toLowerCase(),
+            },
+          });
+
+          for (const v of variantData) {
+            await tx.variantSnapshot.upsert({
+              where: {
+                productSnapshotId_variantId: {
+                  productSnapshotId: numericId,
+                  variantId: v.variantId,
+                },
+              },
+              create: {
+                productSnapshotId: numericId,
+                variantId: v.variantId,
+                title: v.title,
+                price: v.price,
+                inventoryQuantity: v.inventoryQuantity,
+              },
+              update: {
+                title: v.title,
+                price: v.price,
+                inventoryQuantity: v.inventoryQuantity,
+              },
+            });
+          }
         });
 
         // Ensure we have a baseline snapshot for this product (legacy EventLog).

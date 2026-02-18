@@ -76,15 +76,29 @@ model ChangeEvent {
 
 // Product state snapshot for change detection
 model ProductSnapshot {
-  id        String   @id // Shopify product ID
+  id        String            @id // Shopify product ID
   shop      String
   title     String
-  status    String   // "active" | "draft" | "archived"
-  variants  String   // JSON: [{id, title, price, inventoryQuantity}]
-  updatedAt DateTime @updatedAt
+  status    String            // "active" | "draft" | "archived"
+  updatedAt DateTime          @updatedAt
+  variants  VariantSnapshot[]
 
   @@unique([shop, id])
   @@index([shop])
+}
+
+// Normalized variant state — one row per variant, atomic updates
+model VariantSnapshot {
+  id                 String          @id @default(uuid())
+  variantId          String          // Shopify variant ID (numeric string)
+  productSnapshotId  String          // FK to ProductSnapshot.id
+  title              String
+  price              String
+  inventoryQuantity  Int             @default(0)
+  product            ProductSnapshot @relation(fields: [productSnapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([productSnapshotId, variantId])
+  @@index([productSnapshotId])
 }
 
 model EventLog {

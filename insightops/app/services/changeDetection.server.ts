@@ -58,44 +58,71 @@ async function getProductSnapshot(shop: string, productId: string): Promise<{
 } | null> {
   const snapshot = await db.productSnapshot.findUnique({
     where: { shop_id: { shop, id: productId } },
+    include: { variants: true },
   });
 
   if (!snapshot) return null;
 
-  try {
-    const variants = JSON.parse(snapshot.variants) as VariantSnapshot[];
-    return {
-      title: snapshot.title,
-      status: snapshot.status,
-      variants,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    title: snapshot.title,
+    status: snapshot.status,
+    variants: snapshot.variants.map((v) => ({
+      id: v.variantId,
+      title: v.title,
+      price: v.price,
+      inventoryQuantity: v.inventoryQuantity,
+    })),
+  };
 }
 
 /**
- * Update the ProductSnapshot after processing
+ * Update the ProductSnapshot after processing.
+ * Uses a transaction to atomically replace all variant rows.
  */
 async function updateProductSnapshot(
   shop: string,
   productId: string,
   data: { title: string; status: string; variants: VariantSnapshot[] }
 ): Promise<void> {
-  await db.productSnapshot.upsert({
-    where: { shop_id: { shop, id: productId } },
-    create: {
-      id: productId,
-      shop,
-      title: data.title,
-      status: data.status,
-      variants: JSON.stringify(data.variants),
-    },
-    update: {
-      title: data.title,
-      status: data.status,
-      variants: JSON.stringify(data.variants),
-    },
+  await db.$transaction(async (tx) => {
+    // Upsert the product snapshot
+    await tx.productSnapshot.upsert({
+      where: { shop_id: { shop, id: productId } },
+      create: {
+        id: productId,
+        shop,
+        title: data.title,
+        status: data.status,
+      },
+      update: {
+        title: data.title,
+        status: data.status,
+      },
+    });
+
+    // Upsert each variant individually (atomic per-variant)
+    for (const variant of data.variants) {
+      await tx.variantSnapshot.upsert({
+        where: {
+          productSnapshotId_variantId: {
+            productSnapshotId: productId,
+            variantId: variant.id,
+          },
+        },
+        create: {
+          variantId: variant.id,
+          productSnapshotId: productId,
+          title: variant.title,
+          price: variant.price,
+          inventoryQuantity: variant.inventoryQuantity,
+        },
+        update: {
+          title: variant.title,
+          price: variant.price,
+          inventoryQuantity: variant.inventoryQuantity,
+        },
+      });
+    }
   });
 }
 
