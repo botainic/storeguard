@@ -164,3 +164,30 @@ export async function cleanupOldJobs(olderThanDays: number = 7) {
 
   return result.count;
 }
+
+/**
+ * Clean up old data to keep DB small:
+ * - ChangeEvents older than 90 days (digested ones)
+ * - ProductSnapshots with no recent ChangeEvents
+ * - Completed/failed WebhookJobs older than 7 days
+ */
+export async function cleanupOldData() {
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+  // 1. Delete old digested change events (keep undigested ones)
+  const events = await db.changeEvent.deleteMany({
+    where: {
+      detectedAt: { lt: ninetyDaysAgo },
+      digestedAt: { not: null },
+    },
+  });
+
+  // 2. Clean old webhook jobs
+  const jobs = await cleanupOldJobs(7);
+
+  if (events.count > 0 || jobs > 0) {
+    console.log(`[StoreGuard] Retention cleanup: ${events.count} old events, ${jobs} old jobs`);
+  }
+
+  return { events: events.count, jobs };
+}

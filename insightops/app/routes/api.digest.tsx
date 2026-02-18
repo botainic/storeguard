@@ -6,6 +6,7 @@ import {
   getEventIdsFromDigest,
 } from "../services/dailyDigest.server";
 import { sendDigestEmail } from "../services/emailService.server";
+import { cleanupOldData } from "../services/jobQueue.server";
 
 /**
  * Daily Digest API Endpoint
@@ -136,6 +137,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           error: error instanceof Error ? error.message : "Unknown error",
         });
       }
+    }
+
+    // Run retention cleanup
+    try {
+      await cleanupOldData();
+    } catch (err) {
+      console.error("[StoreGuard] Retention cleanup failed:", err);
     }
 
     // Summary

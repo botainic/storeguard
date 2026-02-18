@@ -97,6 +97,7 @@ const MAX_LINE_ITEM_PAGES = 10; // 10 pages * 50 items = 500 line items per orde
 // Key: `${shop}:${periodDays}`, Value: velocity map
 const velocityCache = new Map<string, { data: Map<string, ProductVelocity>; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX_ENTRIES = 50; // Prevent unbounded memory growth
 
 /**
  * Extract numeric ID from Shopify GID.
@@ -368,6 +369,12 @@ export async function getShopSalesVelocity(
   try {
     const orders = await fetchOrders(shop, session.accessToken, periodDays);
     const velocityMap = calculateProductVelocity(orders, periodDays);
+
+    // Evict oldest entries if cache is full
+    if (velocityCache.size >= CACHE_MAX_ENTRIES) {
+      const firstKey = velocityCache.keys().next().value;
+      if (firstKey) velocityCache.delete(firstKey);
+    }
 
     // Cache the result
     velocityCache.set(cacheKey, {
