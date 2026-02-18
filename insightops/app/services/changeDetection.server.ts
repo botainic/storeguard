@@ -19,6 +19,7 @@ import {
   enrichThemePublish,
   serializeContext,
 } from "./contextEnricher.server";
+import { estimateMoneySaved } from "./moneySaved.utils";
 
 /**
  * Change Detection Service for StoreGuard
@@ -188,6 +189,7 @@ async function createChangeEvent(data: {
   importance?: "high" | "medium" | "low";
   groupId?: string;
   contextData?: string | null;
+  moneySaved?: number | null;
 }): Promise<void> {
   try {
     const importance = data.importance ?? "medium";
@@ -214,6 +216,7 @@ async function createChangeEvent(data: {
         groupId: data.groupId,
         contextData: data.contextData ?? null,
         instantAlertSentAt: sendInstant ? new Date() : null,
+        moneySaved: data.moneySaved ?? null,
       },
     });
     console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
@@ -309,6 +312,13 @@ export async function detectPriceChanges(
       );
       const contextData = serializeContext(enriched);
 
+      const moneySaved = estimateMoneySaved({
+        eventType: "price_change",
+        velocity,
+        beforeValue: `$${oldVariant.price}`,
+        afterValue: `$${newVariant.price}`,
+      });
+
       await createChangeEvent({
         shop,
         entityType: "variant",
@@ -320,6 +330,7 @@ export async function detectPriceChanges(
         webhookId: `${webhookId}-price-${newVariant.id}`,
         importance: importance as "high" | "medium" | "low",
         contextData,
+        moneySaved,
       });
       changesDetected++;
     }
@@ -390,6 +401,13 @@ export async function detectVisibilityChanges(
     );
     const contextData = serializeContext(enriched);
 
+    const moneySaved = estimateMoneySaved({
+      eventType: "visibility_change",
+      velocity,
+      beforeValue: oldSnapshot.status,
+      afterValue: product.status,
+    });
+
     await createChangeEvent({
       shop,
       entityType: "product",
@@ -401,6 +419,7 @@ export async function detectVisibilityChanges(
       webhookId: `${webhookId}-status`,
       importance,
       contextData,
+      moneySaved,
     });
 
     // Update snapshot
@@ -494,6 +513,13 @@ export async function detectInventoryZero(
   );
   const contextData = serializeContext(enriched);
 
+  const moneySaved = estimateMoneySaved({
+    eventType: "inventory_zero",
+    velocity,
+    beforeValue: String(previousQuantity),
+    afterValue: "0",
+  });
+
   await createChangeEvent({
     shop,
     entityType: "variant",
@@ -505,6 +531,7 @@ export async function detectInventoryZero(
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
     importance: "high",
     contextData,
+    moneySaved,
   });
 
   return true;
@@ -572,6 +599,13 @@ export async function detectLowStock(
   );
   const contextData = serializeContext(enriched);
 
+  const moneySaved = estimateMoneySaved({
+    eventType: "inventory_low",
+    velocity,
+    beforeValue: String(previousQuantity),
+    afterValue: String(newQuantity),
+  });
+
   await createChangeEvent({
     shop,
     entityType: "variant",
@@ -583,6 +617,7 @@ export async function detectLowStock(
     webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
     importance: "medium",
     contextData,
+    moneySaved,
   });
 
   console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} (threshold: ${threshold})`);

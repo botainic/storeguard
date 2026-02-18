@@ -76,6 +76,7 @@ model ChangeEvent {
   diff         String?   // JSON snapshot/change data (unified from EventLog)
   author       String?   // Who made the change (from Shopify Events API)
   instantAlertSentAt DateTime? // When instant alert email was sent (null = not sent)
+  moneySaved         Float?    // Estimated revenue saved by catching this change (USD)
 
   @@index([shop])
   @@index([shop, detectedAt])
