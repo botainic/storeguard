@@ -860,41 +860,31 @@ index 0000000..ae71798
 +
 +  return new Response();
 +};
-diff --git a/insightops/app/routes/webhooks.domains.create.tsx b/insightops/app/routes/webhooks.domains.create.tsx
-new file mode 100644
-index 0000000..1033f84
---- /dev/null
+diff --git a/insightops/app/routes/webhooks.orders.paid.tsx b/insightops/app/routes/webhooks.domains.create.tsx
+similarity index 87%
+rename from insightops/app/routes/webhooks.orders.paid.tsx
+rename to insightops/app/routes/webhooks.domains.create.tsx
+index 023d3b4..1033f84 100644
+--- a/insightops/app/routes/webhooks.orders.paid.tsx
 +++ b/insightops/app/routes/webhooks.domains.create.tsx
-@@ -0,0 +1,29 @@
-+import type { ActionFunctionArgs } from "react-router";
-+import { authenticate } from "../shopify.server";
-+import { queueWebhookJob } from "../services/jobQueue.server";
-+
-+export const action = async ({ request }: ActionFunctionArgs) => {
-+  const webhookId = request.headers.get("X-Shopify-Webhook-Id");
-+
-+  const { shop, session, topic, payload } =
-+    await authenticate.webhook(request);
-+
-+  console.log(`[StoreGuard] Received ${topic} webhook for ${shop} (ID: ${webhookId})`);
-+
-+  if (!session) {
-+    return new Response();
-+  }
-+
+@@ -14,14 +14,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
+     return new Response();
+   }
+ 
+-  const order = payload as { id: number };
 +  const domain = payload as { id: number };
-+
-+  await queueWebhookJob({
-+    shop,
-+    topic,
+ 
+   await queueWebhookJob({
+     shop,
+     topic,
+-    resourceId: String(order.id),
 +    resourceId: String(domain.id),
-+    payload,
-+    webhookId: webhookId || undefined,
+     payload,
+     webhookId: webhookId || undefined,
 +    delayMs: 2000,
-+  });
-+
-+  return new Response();
-+};
+   });
+ 
+   return new Response();
 diff --git a/insightops/app/routes/webhooks.domains.destroy.tsx b/insightops/app/routes/webhooks.domains.destroy.tsx
 new file mode 100644
 index 0000000..1033f84
@@ -966,18 +956,31 @@ index 0000000..1033f84
 +  return new Response();
 +};
 diff --git a/insightops/app/services/changeDetection.server.ts b/insightops/app/services/changeDetection.server.ts
-index b1f1c7c..ca3c714 100644
+index b1f1c7c..6d3cf77 100644
 --- a/insightops/app/services/changeDetection.server.ts
 +++ b/insightops/app/services/changeDetection.server.ts
-@@ -8,6 +8,7 @@ import {
+@@ -8,9 +8,19 @@ import {
    shouldAlertInventoryZero as checkInventoryZero,
    shouldAlertLowStock as checkLowStock,
    formatVariantLabel,
 +  isCriticalInstantAlert,
  } from "./changeDetection.utils";
  import { getProductSalesVelocity } from "./salesVelocity.server";
- import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
-@@ -60,20 +61,21 @@ async function getProductSnapshot(shop: string, productId: string): Promise<{
+-import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
++import {
++  enrichPriceChange,
++  enrichInventoryZero,
++  enrichLowStock,
++  enrichVisibilityChange,
++  enrichThemePublish,
++  serializeContext,
++} from "./contextEnricher.server";
++import { estimateMoneySaved } from "./moneySaved.utils";
++import { diffScopes } from "./jobProcessor.utils";
+ 
+ /**
+  * Change Detection Service for StoreGuard
+@@ -60,20 +70,21 @@ async function getProductSnapshot(shop: string, productId: string): Promise<{
  } | null> {
    const snapshot = await db.productSnapshot.findUnique({
      where: { shop_id: { shop, id: productId } },
@@ -1009,7 +1012,7 @@ index b1f1c7c..ca3c714 100644
  }
  
  /**
-@@ -84,21 +86,83 @@ async function updateProductSnapshot(
+@@ -84,21 +95,83 @@ async function updateProductSnapshot(
    productId: string,
    data: { title: string; status: string; variants: VariantSnapshot[] }
  ): Promise<void> {
@@ -1105,7 +1108,7 @@ index b1f1c7c..ca3c714 100644
  }
  
  /**
-@@ -106,9 +170,9 @@ async function updateProductSnapshot(
+@@ -106,9 +179,9 @@ async function updateProductSnapshot(
   */
  async function createChangeEvent(data: {
    shop: string;
@@ -1117,8 +1120,11 @@ index b1f1c7c..ca3c714 100644
    resourceName: string;
    beforeValue: string | null;
    afterValue: string | null;
-@@ -119,6 +183,15 @@ async function createChangeEvent(data: {
+@@ -117,8 +190,18 @@ async function createChangeEvent(data: {
+   importance?: "high" | "medium" | "low";
+   groupId?: string;
    contextData?: string | null;
++  moneySaved?: number | null;
  }): Promise<void> {
    try {
 +    const importance = data.importance ?? "medium";
@@ -1133,7 +1139,7 @@ index b1f1c7c..ca3c714 100644
      const event = await db.changeEvent.create({
        data: {
          shop: data.shop,
-@@ -130,16 +203,16 @@ async function createChangeEvent(data: {
+@@ -130,16 +213,17 @@ async function createChangeEvent(data: {
          afterValue: data.afterValue,
          webhookId: data.webhookId,
          source: data.source ?? "webhook",
@@ -1142,6 +1148,7 @@ index b1f1c7c..ca3c714 100644
          groupId: data.groupId,
          contextData: data.contextData ?? null,
 +        instantAlertSentAt: sendInstant ? new Date() : null,
++        moneySaved: data.moneySaved ?? null,
        },
      });
      console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
@@ -1154,7 +1161,7 @@ index b1f1c7c..ca3c714 100644
        const alertEmail = await getShopAlertEmail(data.shop);
        if (alertEmail) {
          // Fire and forget - don't block on email sending
-@@ -149,7 +222,7 @@ async function createChangeEvent(data: {
+@@ -149,7 +233,7 @@ async function createChangeEvent(data: {
              resourceName: data.resourceName,
              beforeValue: data.beforeValue,
              afterValue: data.afterValue,
@@ -1163,7 +1170,78 @@ index b1f1c7c..ca3c714 100644
              detectedAt: event.detectedAt,
              contextData: data.contextData ?? null,
            },
-@@ -368,7 +441,8 @@ export async function detectInventoryZero(
+@@ -221,15 +305,20 @@ export async function detectPriceChanges(
+       const variantLabel = formatVariantLabel(product.title, newVariant.title);
+       const importance = calculatePriceImportance(oldVariant.price, newVariant.price);
+ 
+-      // Build context data with sales velocity
+-      const priceDiff = Math.abs(parseFloat(newVariant.price) - parseFloat(oldVariant.price));
+-      const velocityContext = formatVelocityContext(velocity);
+-      const revenueImpact = estimateRevenueImpact(velocity, "price_error", {
+-        priceDifference: priceDiff,
++      const enriched = enrichPriceChange(
++        variantLabel,
++        `$${oldVariant.price}`,
++        `$${newVariant.price}`,
++        velocity
++      );
++      const contextData = serializeContext(enriched);
++
++      const moneySaved = estimateMoneySaved({
++        eventType: "price_change",
++        velocity,
++        beforeValue: `$${oldVariant.price}`,
++        afterValue: `$${newVariant.price}`,
+       });
+-      const contextData = (velocityContext || revenueImpact !== null)
+-        ? JSON.stringify({ velocityContext, revenueImpact })
+-        : null;
+ 
+       await createChangeEvent({
+         shop,
+@@ -242,6 +331,7 @@ export async function detectPriceChanges(
+         webhookId: `${webhookId}-price-${newVariant.id}`,
+         importance: importance as "high" | "medium" | "low",
+         contextData,
++        moneySaved,
+       });
+       changesDetected++;
+     }
+@@ -304,11 +394,20 @@ export async function detectVisibilityChanges(
+       // Non-critical
+     }
+ 
+-    const velocityContext = formatVelocityContext(velocity);
+-    const revenueImpact = estimateRevenueImpact(velocity, "visibility", {});
+-    const contextData = (velocityContext || revenueImpact !== null)
+-      ? JSON.stringify({ velocityContext, revenueImpact })
+-      : null;
++    const enriched = enrichVisibilityChange(
++      product.title,
++      oldSnapshot.status,
++      product.status,
++      velocity
++    );
++    const contextData = serializeContext(enriched);
++
++    const moneySaved = estimateMoneySaved({
++      eventType: "visibility_change",
++      velocity,
++      beforeValue: oldSnapshot.status,
++      afterValue: product.status,
++    });
+ 
+     await createChangeEvent({
+       shop,
+@@ -321,6 +420,7 @@ export async function detectVisibilityChanges(
+       webhookId: `${webhookId}-status`,
+       importance,
+       contextData,
++      moneySaved,
+     });
+ 
+     // Update snapshot
+@@ -368,7 +468,8 @@ export async function detectInventoryZero(
    variantTitle: string,
    newQuantity: number,
    previousQuantity: number | null, // Must be provided from webhook processing
@@ -1173,22 +1251,49 @@ index b1f1c7c..ca3c714 100644
  ): Promise<boolean> {
    // Check if shop wants to track inventory
    if (!await canTrackFeature(shop, "inventory")) {
-@@ -406,9 +480,11 @@ export async function detectInventoryZero(
+@@ -404,23 +505,34 @@ export async function detectInventoryZero(
+     // Non-critical
+   }
  
-   const velocityContext = formatVelocityContext(velocity);
-   const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
+-  const velocityContext = formatVelocityContext(velocity);
+-  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
 -  const contextData = (velocityContext || revenueImpact !== null)
 -    ? JSON.stringify({ velocityContext, revenueImpact })
 -    : null;
-+  const ctxObj: Record<string, unknown> = {};
-+  if (velocityContext) ctxObj.velocityContext = velocityContext;
-+  if (revenueImpact !== null) ctxObj.revenueImpact = revenueImpact;
-+  if (locationContext) ctxObj.locationContext = locationContext;
-+  const contextData = Object.keys(ctxObj).length > 0 ? JSON.stringify(ctxObj) : null;
++  const displayName = formatVariantLabel(productTitle, variantTitle);
++  const enriched = enrichInventoryZero(
++    displayName,
++    String(previousQuantity),
++    velocity,
++    locationContext ?? null
++  );
++  const contextData = serializeContext(enriched);
++
++  const moneySaved = estimateMoneySaved({
++    eventType: "inventory_zero",
++    velocity,
++    beforeValue: String(previousQuantity),
++    afterValue: "0",
++  });
  
    await createChangeEvent({
      shop,
-@@ -439,7 +515,8 @@ export async function detectLowStock(
+     entityType: "variant",
+     entityId: inventoryItemId,
+     eventType: "inventory_zero",
+-    resourceName: formatVariantLabel(productTitle, variantTitle),
++    resourceName: displayName,
+     beforeValue: String(previousQuantity),
+     afterValue: "0",
+     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
+-    importance: "high", // Out of stock is always high importance
++    importance: "high",
+     contextData,
++    moneySaved,
+   });
+ 
+   return true;
+@@ -439,7 +551,8 @@ export async function detectLowStock(
    variantTitle: string,
    newQuantity: number,
    previousQuantity: number | null,
@@ -1198,25 +1303,69 @@ index b1f1c7c..ca3c714 100644
  ): Promise<boolean> {
    // Get the shop's low stock threshold
    const threshold = await getLowStockThreshold(shop);
-@@ -480,9 +557,11 @@ export async function detectLowStock(
+@@ -478,11 +591,21 @@ export async function detectLowStock(
+     // Non-critical
+   }
  
-   const velocityContext = formatVelocityContext(velocity);
-   const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
+-  const velocityContext = formatVelocityContext(velocity);
+-  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
 -  const contextData = (velocityContext || revenueImpact !== null)
 -    ? JSON.stringify({ velocityContext, revenueImpact })
 -    : null;
-+  const ctxObj: Record<string, unknown> = {};
-+  if (velocityContext) ctxObj.velocityContext = velocityContext;
-+  if (revenueImpact !== null) ctxObj.revenueImpact = revenueImpact;
-+  if (locationContext) ctxObj.locationContext = locationContext;
-+  const contextData = Object.keys(ctxObj).length > 0 ? JSON.stringify(ctxObj) : null;
++  const enriched = enrichLowStock(
++    displayName,
++    String(previousQuantity),
++    String(newQuantity),
++    velocity,
++    locationContext ?? null
++  );
++  const contextData = serializeContext(enriched);
++
++  const moneySaved = estimateMoneySaved({
++    eventType: "inventory_low",
++    velocity,
++    beforeValue: String(previousQuantity),
++    afterValue: String(newQuantity),
++  });
  
    await createChangeEvent({
      shop,
-@@ -540,6 +619,315 @@ export async function recordThemePublish(
-   return true;
- }
+@@ -493,8 +616,9 @@ export async function detectLowStock(
+     beforeValue: String(previousQuantity),
+     afterValue: String(newQuantity),
+     webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
+-    importance: "medium", // Low stock is medium importance (zero is high)
++    importance: "medium",
+     contextData,
++    moneySaved,
+   });
  
+   console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} (threshold: ${threshold})`);
+@@ -525,16 +649,328 @@ export async function recordThemePublish(
+     return false;
+   }
+ 
++  const enriched = enrichThemePublish(theme.name);
++  const contextData = serializeContext(enriched);
++
+   await createChangeEvent({
+     shop,
+     entityType: "theme",
+     entityId: String(theme.id),
+     eventType: "theme_publish",
+     resourceName: theme.name,
+-    beforeValue: null, // We don't know what theme was live before
++    beforeValue: null,
+     afterValue: "main",
+     webhookId: `${webhookId}-theme`,
+-    importance: "high", // Theme publish is always important
++    importance: "high",
++    contextData,
++  });
++
++  return true;
++}
++
 +// ============================================
 +// COLLECTION CHANGE DETECTION
 +// ============================================
@@ -1426,8 +1575,7 @@ index b1f1c7c..ca3c714 100644
 +  }
 +
 +  // Diff scopes
-+  const added = currentScopes.filter(s => !previousScopes.includes(s));
-+  const removed = previousScopes.filter(s => !currentScopes.includes(s));
++  const { added, removed } = diffScopes(previousScopes, currentScopes);
 +
 +  // No actual change
 +  if (added.length === 0 && removed.length === 0) {
@@ -1521,14 +1669,9 @@ index b1f1c7c..ca3c714 100644
 +    afterValue: null,
 +    webhookId: `${webhookId}-domain-removed`,
 +    importance: "high",
-+  });
-+
-+  return true;
-+}
-+
- /**
-  * Process a product update and detect all relevant changes
-  * This is the main entry point called from jobProcessor
+   });
+ 
+   return true;
 diff --git a/insightops/app/services/changeDetection.test.ts b/insightops/app/services/changeDetection.test.ts
 index 22e5097..050e6ee 100644
 --- a/insightops/app/services/changeDetection.test.ts
@@ -1698,6 +1841,505 @@ index cf64cce..bf8c4ae 100644
 +
 +  return { totalQuantity, locationName };
 +}
+diff --git a/insightops/app/services/contextEnricher.server.ts b/insightops/app/services/contextEnricher.server.ts
+new file mode 100644
+index 0000000..9b729bf
+--- /dev/null
++++ b/insightops/app/services/contextEnricher.server.ts
+@@ -0,0 +1,240 @@
++/**
++ * Context Enricher for StoreGuard
++ *
++ * Centralizes business context enrichment for ChangeEvents.
++ * Each event type gets a human-readable summary stored in contextData JSON.
++ *
++ * Context structure (stored as JSON string in ChangeEvent.contextData):
++ * {
++ *   summary: string;           // Human-readable one-liner for emails/UI
++ *   velocityContext?: string;   // e.g., "selling 8/day"
++ *   revenueImpact?: number;    // Estimated $/hr impact
++ *   locationContext?: string;   // e.g., "Warehouse A"
++ *   percentChange?: number;    // For price changes
++ *   direction?: "up" | "down"; // For price changes
++ * }
++ */
++
++import type { ProductVelocity } from "./salesVelocity.utils";
++import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
++
++export interface EnrichedContext {
++  summary: string;
++  velocityContext: string | null;
++  revenueImpact: number | null;
++  locationContext: string | null;
++  percentChange: number | null;
++  direction: "up" | "down" | null;
++}
++
++/**
++ * Enrich a price change event with business context.
++ * Calculates % change, direction, and flags likely typos (>=90% drop).
++ */
++export function enrichPriceChange(
++  resourceName: string,
++  beforePrice: string,
++  afterPrice: string,
++  velocity: ProductVelocity | null
++): EnrichedContext {
++  const oldVal = parseFloat(beforePrice.replace(/^\$/, ""));
++  const newVal = parseFloat(afterPrice.replace(/^\$/, ""));
++
++  let percentChange: number | null = null;
++  let direction: "up" | "down" | null = null;
++
++  if (!isNaN(oldVal) && !isNaN(newVal) && oldVal > 0) {
++    percentChange = Math.round(((newVal - oldVal) / oldVal) * 100);
++    direction = newVal > oldVal ? "up" : "down";
++  }
++
++  const velocityContext = formatVelocityContext(velocity);
++  const priceDiff = !isNaN(oldVal) && !isNaN(newVal) ? Math.abs(newVal - oldVal) : 0;
++  const revenueImpact = estimateRevenueImpact(velocity, "price_error", {
++    priceDifference: priceDiff,
++  });
++
++  let summary = `${resourceName} changed from ${beforePrice} to ${afterPrice}`;
++  if (percentChange !== null) {
++    const absPercent = Math.abs(percentChange);
++    const dirWord = direction === "up" ? "increase" : "decrease";
++    summary += ` (${absPercent}% ${dirWord})`;
++    if (direction === "down" && absPercent >= 90) {
++      summary += " — probably a typo";
++    }
++  }
++  if (velocityContext) {
++    summary += ` — ${velocityContext}`;
++  }
++
++  return {
++    summary,
++    velocityContext,
++    revenueImpact,
++    locationContext: null,
++    percentChange,
++    direction,
++  };
++}
++
++/**
++ * Enrich an inventory zero event with business context.
++ * Includes revenue at risk based on sales velocity.
++ */
++export function enrichInventoryZero(
++  resourceName: string,
++  previousQuantity: string,
++  velocity: ProductVelocity | null,
++  locationContext: string | null
++): EnrichedContext {
++  const velocityCtx = formatVelocityContext(velocity);
++  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
++
++  let summary = `${resourceName} hit zero stock (was ${previousQuantity} units)`;
++  if (velocityCtx) {
++    summary += ` — you've been ${velocityCtx}`;
++  }
++  if (locationContext) {
++    summary += ` at ${locationContext}`;
++  }
++
++  return {
++    summary,
++    velocityContext: velocityCtx,
++    revenueImpact,
++    locationContext,
++    percentChange: null,
++    direction: null,
++  };
++}
++
++/**
++ * Enrich a low stock event with business context.
++ */
++export function enrichLowStock(
++  resourceName: string,
++  previousQuantity: string,
++  currentQuantity: string,
++  velocity: ProductVelocity | null,
++  locationContext: string | null
++): EnrichedContext {
++  const velocityCtx = formatVelocityContext(velocity);
++  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
++
++  let summary = `${resourceName} dropped to ${currentQuantity} units (was ${previousQuantity})`;
++  if (velocityCtx) {
++    summary += ` — ${velocityCtx}`;
++  }
++  if (locationContext) {
++    summary += ` at ${locationContext}`;
++  }
++
++  return {
++    summary,
++    velocityContext: velocityCtx,
++    revenueImpact,
++    locationContext,
++    percentChange: null,
++    direction: null,
++  };
++}
++
++/**
++ * Enrich a visibility change event with business context.
++ * Includes what the transition means and recent sales data.
++ */
++export function enrichVisibilityChange(
++  resourceName: string,
++  beforeStatus: string,
++  afterStatus: string,
++  velocity: ProductVelocity | null
++): EnrichedContext {
++  const velocityCtx = formatVelocityContext(velocity);
++  const revenueImpact = estimateRevenueImpact(velocity, "visibility", {});
++
++  const goingHidden = afterStatus === "draft" || afterStatus === "archived";
++  const visibilityLabel = goingHidden ? "no longer visible to customers" : "now visible to customers";
++
++  let summary = `${resourceName} went ${beforeStatus} → ${afterStatus} — ${visibilityLabel}`;
++  if (velocityCtx) {
++    summary += ` (${velocityCtx})`;
++  }
++
++  return {
++    summary,
++    velocityContext: velocityCtx,
++    revenueImpact,
++    locationContext: null,
++    percentChange: null,
++    direction: null,
++  };
++}
++
++/**
++ * Enrich a theme publish event.
++ */
++export function enrichThemePublish(themeName: string): EnrichedContext {
++  const time = new Date().toLocaleTimeString("en-US", {
++    hour: "numeric",
++    minute: "2-digit",
++    hour12: true,
++  });
++  const summary = `Theme "${themeName}" went live at ${time}`;
++
++  return {
++    summary,
++    velocityContext: null,
++    revenueImpact: null,
++    locationContext: null,
++    percentChange: null,
++    direction: null,
++  };
++}
++
++/**
++ * Serialize EnrichedContext to JSON string for storage in contextData field.
++ * Returns null if context has no meaningful data.
++ */
++export function serializeContext(context: EnrichedContext): string | null {
++  // Always store if we have a summary
++  if (!context.summary) return null;
++
++  const data: Record<string, unknown> = { summary: context.summary };
++  if (context.velocityContext) data.velocityContext = context.velocityContext;
++  if (context.revenueImpact !== null) data.revenueImpact = context.revenueImpact;
++  if (context.locationContext) data.locationContext = context.locationContext;
++  if (context.percentChange !== null) data.percentChange = context.percentChange;
++  if (context.direction) data.direction = context.direction;
++
++  return JSON.stringify(data);
++}
++
++/**
++ * Parse contextData JSON string back to structured data.
++ * Safe — returns defaults on invalid/missing data.
++ */
++export function parseContextData(contextData: string | null | undefined): {
++  summary: string | null;
++  velocityContext: string | null;
++  revenueImpact: number | null;
++  locationContext: string | null;
++  percentChange: number | null;
++  direction: "up" | "down" | null;
++} {
++  if (!contextData) {
++    return { summary: null, velocityContext: null, revenueImpact: null, locationContext: null, percentChange: null, direction: null };
++  }
++  try {
++    const ctx = JSON.parse(contextData) as Record<string, unknown>;
++    return {
++      summary: typeof ctx.summary === "string" ? ctx.summary : null,
++      velocityContext: typeof ctx.velocityContext === "string" ? ctx.velocityContext : null,
++      revenueImpact: typeof ctx.revenueImpact === "number" ? ctx.revenueImpact : null,
++      locationContext: typeof ctx.locationContext === "string" ? ctx.locationContext : null,
++      percentChange: typeof ctx.percentChange === "number" ? ctx.percentChange : null,
++      direction: ctx.direction === "up" || ctx.direction === "down" ? ctx.direction : null,
++    };
++  } catch {
++    return { summary: null, velocityContext: null, revenueImpact: null, locationContext: null, percentChange: null, direction: null };
++  }
++}
+diff --git a/insightops/app/services/contextEnricher.test.ts b/insightops/app/services/contextEnricher.test.ts
+new file mode 100644
+index 0000000..86b640a
+--- /dev/null
++++ b/insightops/app/services/contextEnricher.test.ts
+@@ -0,0 +1,247 @@
++import { describe, it, expect } from "vitest";
++import {
++  enrichPriceChange,
++  enrichInventoryZero,
++  enrichLowStock,
++  enrichVisibilityChange,
++  enrichThemePublish,
++  serializeContext,
++  parseContextData,
++  type EnrichedContext,
++} from "./contextEnricher.server";
++import type { ProductVelocity } from "./salesVelocity.utils";
++
++const highVelocity: ProductVelocity = {
++  productId: "100",
++  totalUnitsSold: 240,
++  totalRevenue: 12000,
++  orderCount: 200,
++  dailySalesRate: 8,
++  dailyRevenue: 400,
++  periodDays: 30,
++};
++
++const lowVelocity: ProductVelocity = {
++  productId: "100",
++  totalUnitsSold: 3,
++  totalRevenue: 150,
++  orderCount: 3,
++  dailySalesRate: 0.1,
++  dailyRevenue: 5,
++  periodDays: 30,
++};
++
++describe("enrichPriceChange", () => {
++  it("should calculate percent decrease and direction", () => {
++    const result = enrichPriceChange("Blue Jacket", "$100.00", "$50.00", null);
++    expect(result.percentChange).toBe(-50);
++    expect(result.direction).toBe("down");
++    expect(result.summary).toContain("50% decrease");
++  });
++
++  it("should calculate percent increase and direction", () => {
++    const result = enrichPriceChange("Blue Jacket", "$50.00", "$100.00", null);
++    expect(result.percentChange).toBe(100);
++    expect(result.direction).toBe("up");
++    expect(result.summary).toContain("100% increase");
++  });
++
++  it("should flag likely typos for >=90% drops", () => {
++    const result = enrichPriceChange("Blue Jacket", "$89.00", "$8.90", null);
++    expect(result.summary).toContain("probably a typo");
++    expect(result.direction).toBe("down");
++  });
++
++  it("should not flag typo for moderate decreases", () => {
++    const result = enrichPriceChange("Blue Jacket", "$100.00", "$80.00", null);
++    expect(result.summary).not.toContain("probably a typo");
++  });
++
++  it("should include velocity context when available", () => {
++    const result = enrichPriceChange("Blue Jacket", "$100.00", "$50.00", highVelocity);
++    expect(result.velocityContext).toBe("selling 8/day");
++    expect(result.summary).toContain("selling 8/day");
++    expect(result.revenueImpact).not.toBeNull();
++  });
++
++  it("should handle no velocity data gracefully", () => {
++    const result = enrichPriceChange("Blue Jacket", "$100.00", "$50.00", null);
++    expect(result.velocityContext).toBeNull();
++    expect(result.revenueImpact).toBeNull();
++  });
++
++  it("should handle zero old price", () => {
++    const result = enrichPriceChange("Free Item", "$0.00", "$10.00", null);
++    // Can't calculate % change from $0
++    expect(result.percentChange).toBeNull();
++    expect(result.direction).toBeNull();
++  });
++});
++
++describe("enrichInventoryZero", () => {
++  it("should include previous quantity in summary", () => {
++    const result = enrichInventoryZero("Black Hoodie", "15", null, null);
++    expect(result.summary).toContain("Black Hoodie hit zero stock (was 15 units)");
++  });
++
++  it("should include velocity context", () => {
++    const result = enrichInventoryZero("Black Hoodie", "15", highVelocity, null);
++    expect(result.summary).toContain("you've been selling 8/day");
++    expect(result.revenueImpact).not.toBeNull();
++  });
++
++  it("should include location context", () => {
++    const result = enrichInventoryZero("Black Hoodie", "15", null, "Warehouse A");
++    expect(result.summary).toContain("at Warehouse A");
++    expect(result.locationContext).toBe("Warehouse A");
++  });
++
++  it("should include both velocity and location", () => {
++    const result = enrichInventoryZero("Black Hoodie", "15", highVelocity, "Main Store");
++    expect(result.summary).toContain("selling 8/day");
++    expect(result.summary).toContain("at Main Store");
++  });
++});
++
++describe("enrichLowStock", () => {
++  it("should show current and previous quantities", () => {
++    const result = enrichLowStock("Red Sneakers", "10", "3", null, null);
++    expect(result.summary).toContain("dropped to 3 units (was 10)");
++  });
++
++  it("should include velocity context", () => {
++    const result = enrichLowStock("Red Sneakers", "10", "3", lowVelocity, null);
++    expect(result.summary).toContain("sold 3 in the last 30 days");
++  });
++
++  it("should include location context", () => {
++    const result = enrichLowStock("Red Sneakers", "10", "3", null, "Store Front");
++    expect(result.summary).toContain("at Store Front");
++  });
++});
++
++describe("enrichVisibilityChange", () => {
++  it("should describe going hidden", () => {
++    const result = enrichVisibilityChange("Red Sneakers", "active", "draft", null);
++    expect(result.summary).toContain("no longer visible to customers");
++    expect(result.summary).toContain("active → draft");
++  });
++
++  it("should describe going visible", () => {
++    const result = enrichVisibilityChange("Red Sneakers", "draft", "active", null);
++    expect(result.summary).toContain("now visible to customers");
++  });
++
++  it("should include velocity for hidden products with sales", () => {
++    const result = enrichVisibilityChange("Red Sneakers", "active", "draft", highVelocity);
++    expect(result.summary).toContain("selling 8/day");
++    expect(result.revenueImpact).not.toBeNull();
++  });
++});
++
++describe("enrichThemePublish", () => {
++  it("should include theme name and time", () => {
++    const result = enrichThemePublish("Dawn Custom");
++    expect(result.summary).toContain('Theme "Dawn Custom" went live');
++    expect(result.velocityContext).toBeNull();
++    expect(result.revenueImpact).toBeNull();
++  });
++});
++
++describe("serializeContext", () => {
++  it("should serialize all fields", () => {
++    const context: EnrichedContext = {
++      summary: "Test summary",
++      velocityContext: "selling 8/day",
++      revenueImpact: 16.67,
++      locationContext: "Warehouse A",
++      percentChange: -50,
++      direction: "down",
++    };
++    const json = serializeContext(context);
++    expect(json).not.toBeNull();
++    const parsed = JSON.parse(json!);
++    expect(parsed.summary).toBe("Test summary");
++    expect(parsed.velocityContext).toBe("selling 8/day");
++    expect(parsed.revenueImpact).toBe(16.67);
++    expect(parsed.locationContext).toBe("Warehouse A");
++    expect(parsed.percentChange).toBe(-50);
++    expect(parsed.direction).toBe("down");
++  });
++
++  it("should omit null optional fields", () => {
++    const context: EnrichedContext = {
++      summary: "Simple summary",
++      velocityContext: null,
++      revenueImpact: null,
++      locationContext: null,
++      percentChange: null,
++      direction: null,
++    };
++    const json = serializeContext(context);
++    const parsed = JSON.parse(json!);
++    expect(parsed.summary).toBe("Simple summary");
++    expect(parsed.velocityContext).toBeUndefined();
++    expect(parsed.revenueImpact).toBeUndefined();
++  });
++
++  it("should return null for empty summary", () => {
++    const context: EnrichedContext = {
++      summary: "",
++      velocityContext: null,
++      revenueImpact: null,
++      locationContext: null,
++      percentChange: null,
++      direction: null,
++    };
++    expect(serializeContext(context)).toBeNull();
++  });
++});
++
++describe("parseContextData", () => {
++  it("should parse valid JSON with all fields", () => {
++    const json = JSON.stringify({
++      summary: "Test",
++      velocityContext: "selling 8/day",
++      revenueImpact: 16.67,
++      locationContext: "Warehouse",
++      percentChange: -50,
++      direction: "down",
++    });
++    const result = parseContextData(json);
++    expect(result.summary).toBe("Test");
++    expect(result.velocityContext).toBe("selling 8/day");
++    expect(result.revenueImpact).toBe(16.67);
++    expect(result.locationContext).toBe("Warehouse");
++    expect(result.percentChange).toBe(-50);
++    expect(result.direction).toBe("down");
++  });
++
++  it("should return defaults for null input", () => {
++    const result = parseContextData(null);
++    expect(result.summary).toBeNull();
++    expect(result.velocityContext).toBeNull();
++    expect(result.revenueImpact).toBeNull();
++    expect(result.percentChange).toBeNull();
++    expect(result.direction).toBeNull();
++  });
++
++  it("should return defaults for invalid JSON", () => {
++    const result = parseContextData("not json");
++    expect(result.summary).toBeNull();
++  });
++
++  it("should handle legacy contextData without summary field", () => {
++    const json = JSON.stringify({ velocityContext: "selling 8/day", revenueImpact: 10 });
++    const result = parseContextData(json);
++    expect(result.summary).toBeNull();
++    expect(result.velocityContext).toBe("selling 8/day");
++    expect(result.revenueImpact).toBe(10);
++  });
++
++  it("should reject invalid direction values", () => {
++    const json = JSON.stringify({ direction: "sideways" });
++    const result = parseContextData(json);
++    expect(result.direction).toBeNull();
++  });
++});
 diff --git a/insightops/app/services/dailyDigest.server.ts b/insightops/app/services/dailyDigest.server.ts
 index 02b6584..8950192 100644
 --- a/insightops/app/services/dailyDigest.server.ts
@@ -2345,10 +2987,10 @@ index 5366b10..b5af624 100644
   */
 diff --git a/insightops/app/services/emailTemplates.server.ts b/insightops/app/services/emailTemplates.server.ts
 new file mode 100644
-index 0000000..c07da22
+index 0000000..9fa1d20
 --- /dev/null
 +++ b/insightops/app/services/emailTemplates.server.ts
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,493 @@
 +/**
 + * Email Templates for StoreGuard
 + *
@@ -2438,24 +3080,26 @@ index 0000000..c07da22
 +
 +/** Parse contextData JSON safely */
 +function parseContextData(contextData: string | null | undefined): {
++  summary: string | null;
 +  velocityContext: string | null;
 +  locationContext: string | null;
 +  revenueImpact: number | null;
++  percentChange: number | null;
++  direction: "up" | "down" | null;
 +} {
-+  if (!contextData) return { velocityContext: null, locationContext: null, revenueImpact: null };
++  if (!contextData) return { summary: null, velocityContext: null, locationContext: null, revenueImpact: null, percentChange: null, direction: null };
 +  try {
-+    const ctx = JSON.parse(contextData) as {
-+      velocityContext?: string | null;
-+      locationContext?: string | null;
-+      revenueImpact?: number | null;
-+    };
++    const ctx = JSON.parse(contextData) as Record<string, unknown>;
 +    return {
-+      velocityContext: ctx.velocityContext ?? null,
-+      locationContext: ctx.locationContext ?? null,
-+      revenueImpact: ctx.revenueImpact ?? null,
++      summary: typeof ctx.summary === "string" ? ctx.summary : null,
++      velocityContext: typeof ctx.velocityContext === "string" ? ctx.velocityContext : null,
++      locationContext: typeof ctx.locationContext === "string" ? ctx.locationContext : null,
++      revenueImpact: typeof ctx.revenueImpact === "number" ? ctx.revenueImpact : null,
++      percentChange: typeof ctx.percentChange === "number" ? ctx.percentChange : null,
++      direction: ctx.direction === "up" || ctx.direction === "down" ? ctx.direction : null,
 +    };
 +  } catch {
-+    return { velocityContext: null, locationContext: null, revenueImpact: null };
++    return { summary: null, velocityContext: null, locationContext: null, revenueImpact: null, percentChange: null, direction: null };
 +  }
 +}
 +
@@ -2476,10 +3120,20 @@ index 0000000..c07da22
 +    hour12: true,
 +  });
 +
-+  const { velocityContext, locationContext } = parseContextData(event.contextData);
++  const ctx = parseContextData(event.contextData);
++
++  // Use enriched summary when available for price, inventory, visibility, theme events
++  if (ctx.summary) {
++    const revenueNote = ctx.revenueImpact !== null
++      ? ` &mdash; ~$${ctx.revenueImpact.toFixed(2)}/hr at risk`
++      : "";
++    return `${ctx.summary}${revenueNote} &bull; ${time}`;
++  }
++
++  // Fallback for events without enriched context (collections, discounts, etc.)
 +  let suffix = "";
-+  if (locationContext) suffix += ` &mdash; ${locationContext}`;
-+  if (velocityContext) suffix += ` &mdash; ${velocityContext}`;
++  if (ctx.locationContext) suffix += ` &mdash; ${ctx.locationContext}`;
++  if (ctx.velocityContext) suffix += ` &mdash; ${ctx.velocityContext}`;
 +
 +  switch (event.eventType) {
 +    case "price_change":
@@ -2693,8 +3347,14 @@ index 0000000..c07da22
 +
 +/** Build the change description for an instant alert */
 +export function buildInstantAlertDescription(event: InstantAlertEvent): string {
-+  const { velocityContext, locationContext } = parseContextData(event.contextData);
++  const ctx = parseContextData(event.contextData);
 +
++  // Use enriched summary when available
++  if (ctx.summary) {
++    return ctx.summary;
++  }
++
++  // Fallback for events without enriched context
 +  let description = "";
 +  switch (event.eventType) {
 +    case "price_change":
@@ -2743,8 +3403,8 @@ index 0000000..c07da22
 +      description = `${event.beforeValue || ""} &rarr; ${event.afterValue || ""}`;
 +  }
 +
-+  if (locationContext) description += ` &mdash; ${locationContext}`;
-+  if (velocityContext) description += ` &mdash; ${velocityContext}`;
++  if (ctx.locationContext) description += ` &mdash; ${ctx.locationContext}`;
++  if (ctx.velocityContext) description += ` &mdash; ${ctx.velocityContext}`;
 +
 +  return description;
 +}
@@ -3391,10 +4051,10 @@ index 0000000..e6a757c
 +  });
 +});
 diff --git a/insightops/app/services/jobProcessor.server.ts b/insightops/app/services/jobProcessor.server.ts
-index acc4c19..8a1e043 100644
+index acc4c19..5aa2fa9 100644
 --- a/insightops/app/services/jobProcessor.server.ts
 +++ b/insightops/app/services/jobProcessor.server.ts
-@@ -12,7 +12,20 @@ import {
+@@ -12,7 +12,21 @@ import {
    detectLowStock,
    deleteProductSnapshot,
    recordThemePublish,
@@ -3412,10 +4072,11 @@ index acc4c19..8a1e043 100644
 +  aggregateInventoryLevels,
 +  type InventoryLevelNode,
 +} from "./changeDetection.utils";
++import { normalizeTopic } from "./jobProcessor.utils";
  
  // Full product payload from Shopify webhook
  interface ProductPayload {
-@@ -69,6 +82,23 @@ interface CollectionPayload {
+@@ -69,6 +83,23 @@ interface CollectionPayload {
    } | null;
  }
  
@@ -3439,7 +4100,7 @@ index acc4c19..8a1e043 100644
  interface InventoryLevelPayload {
    inventory_item_id: number;
    location_id: number;
-@@ -322,20 +352,19 @@ async function processProductUpdate(
+@@ -322,20 +353,19 @@ async function processProductUpdate(
      }
    }
  
@@ -3463,7 +4124,7 @@ index acc4c19..8a1e043 100644
      take: 5, // Check recent events for a valid snapshot
    });
  
-@@ -382,16 +411,20 @@ async function processProductUpdate(
+@@ -382,16 +412,20 @@ async function processProductUpdate(
      update: { title: payload.title },
    });
  
@@ -3489,7 +4150,7 @@ index acc4c19..8a1e043 100644
      },
    });
  
-@@ -438,15 +471,19 @@ async function processProductCreate(
+@@ -438,15 +472,19 @@ async function processProductCreate(
      update: { title: payload.title },
    });
  
@@ -3513,7 +4174,7 @@ index acc4c19..8a1e043 100644
      },
    });
  
-@@ -479,28 +516,33 @@ async function processProductDelete(
+@@ -479,28 +517,33 @@ async function processProductDelete(
    // === StoreGuard: Clean up snapshot for deleted product ===
    await deleteProductSnapshot(shop, productId);
  
@@ -3557,7 +4218,7 @@ index acc4c19..8a1e043 100644
      },
    });
  
-@@ -520,61 +562,229 @@ async function processCollection(
+@@ -520,61 +563,229 @@ async function processCollection(
    const verb = topic.includes("create") ? "create" : topic.includes("update") ? "update" : "delete";
  
    if (verb === "delete") {
@@ -3822,32 +4483,37 @@ index acc4c19..8a1e043 100644
   */
  async function processInventoryUpdate(
    shop: string,
-@@ -647,15 +857,15 @@ async function processInventoryUpdate(
-   // When orders webhook is enabled, this will hide the "symptom" when we already have the "cause"
-   if (productId) {
-     try {
--      const recentOrder = await db.eventLog.findFirst({
-+      const recentOrder = await db.changeEvent.findFirst({
-         where: {
-           shop,
--          topic: "ORDERS_CREATE",
--          timestamp: {
-+          topic: "orders/paid",
-+          detectedAt: {
-             gte: new Date(Date.now() - 30 * 1000), // Within last 30 seconds
-           },
-         },
--        orderBy: { timestamp: "desc" },
-+        orderBy: { detectedAt: "desc" },
-       });
- 
-       if (recentOrder?.diff) {
-@@ -671,114 +881,124 @@ async function processInventoryUpdate(
-     }
+@@ -643,142 +854,124 @@ async function processInventoryUpdate(
+     return;
    }
  
--  // Get previous inventory level for diff display AND for >0→0 detection
--  // Strategy: Check EventLog first (most recent), then fall back to ProductSnapshot
+-  // NOISE FILTER: Skip inventory updates caused by orders
+-  // When orders webhook is enabled, this will hide the "symptom" when we already have the "cause"
+-  if (productId) {
+-    try {
+-      const recentOrder = await db.eventLog.findFirst({
+-        where: {
+-          shop,
+-          topic: "ORDERS_CREATE",
+-          timestamp: {
+-            gte: new Date(Date.now() - 30 * 1000), // Within last 30 seconds
+-          },
+-        },
+-        orderBy: { timestamp: "desc" },
+-      });
+-
+-      if (recentOrder?.diff) {
+-        const orderDiff = JSON.parse(recentOrder.diff);
+-        const orderProductIds = orderDiff.items?.map((item: { productId: number }) => String(item.productId)) || [];
+-        if (orderProductIds.includes(productId)) {
+-          console.log(`[StoreGuard] Skipping inventory update - caused by recent order ${orderDiff.orderName}`);
+-          return;
+-        }
+-      }
+-    } catch (filterError) {
+-      console.error(`[StoreGuard] Noise filter check failed:`, filterError);
+-    }
+-  }
 +  // === Multi-location: Fetch total inventory across all locations ===
 +  const { totalQuantity, locationName } = await fetchTotalInventory(
 +    shop,
@@ -3855,7 +4521,9 @@ index acc4c19..8a1e043 100644
 +    payload.inventory_item_id,
 +    payload.location_id
 +  );
-+
+ 
+-  // Get previous inventory level for diff display AND for >0→0 detection
+-  // Strategy: Check EventLog first (most recent), then fall back to ProductSnapshot
 +  // Get previous TOTAL inventory for diff display AND for >0→0 detection
 +  // Strategy: Check ChangeEvent first (most recent), then fall back to ProductSnapshot
    let oldAvailable: number | null = null;
@@ -4029,7 +4697,7 @@ index acc4c19..8a1e043 100644
      } catch (snapshotError) {
        console.error(`[StoreGuard] Failed to update ProductSnapshot inventory:`, snapshotError);
      }
-@@ -789,40 +1009,49 @@ async function processInventoryUpdate(
+@@ -789,40 +982,49 @@ async function processInventoryUpdate(
        ? `${productTitle} - ${variantTitle}`
        : productTitle;
  
@@ -4092,56 +4760,99 @@ index acc4c19..8a1e043 100644
  }
  
  /**
-@@ -898,15 +1127,19 @@ async function processOrderPaid(
-     discounts: payload.discount_codes,
-   });
- 
--  await db.eventLog.create({
-+  await db.changeEvent.create({
-     data: {
-       shop,
--      shopifyId: String(payload.id),
--      topic: "ORDERS_CREATE",
-+      entityType: "order",
-+      entityId: String(payload.id),
-+      eventType: "order_paid",
-+      resourceName: message,
-+      source: "webhook",
-+      importance: "low",
-+      topic: "orders/paid",
-       author: "Customer",
--      message,
-       diff,
--      webhookId,
-+      webhookId: webhookId ?? `activity-orders-paid-${payload.id}-${Date.now()}`,
-     },
-   });
- 
-@@ -915,16 +1148,37 @@ async function processOrderPaid(
+@@ -845,86 +1047,38 @@ async function processThemePublish(
+ }
  
  /**
-  * Process an app scopes update job
+- * Process an order paid job
++ * Process an app scopes update job
 + * Diffs previous vs current scopes and creates ChangeEvent for permission changes
   */
- async function processScopesUpdate(
+-async function processOrderPaid(
++async function processScopesUpdate(
    shop: string,
-   sessionId: string,
--  payload: { current: string[] }
+-  payload: {
+-    id: number;
+-    name: string;
+-    total_price: string;
+-    subtotal_price: string;
+-    currency: string;
+-    financial_status: string;
+-    line_items: Array<{
+-      title: string;
+-      quantity: number;
+-      price: string;
+-      variant_title: string | null;
+-      product_id: number | null;
+-    }>;
+-    discount_codes: Array<{ code: string; amount: string }>;
+-  },
++  sessionId: string,
 +  payload: { current: string[] },
-+  webhookId: string | null
+   webhookId: string | null
  ): Promise<void> {
+-  const itemCount = payload.line_items.reduce((sum, item) => sum + item.quantity, 0);
+-  const firstItem = payload.line_items[0]?.title || "items";
+-  const itemSummary = itemCount === 1 ? firstItem : `${itemCount} items`;
+-
+-  const amount = parseFloat(payload.total_price);
+-  const formattedAmount = amount.toLocaleString("en-US", {
+-    style: "currency",
+-    currency: payload.currency || "USD",
+-  });
+-
+-  const message = `Order ${payload.name} - ${formattedAmount}`;
+-
+-  const diff = JSON.stringify({
+-    orderId: payload.id,
+-    orderName: payload.name,
+-    total: payload.total_price,
+-    subtotal: payload.subtotal_price,
+-    currency: payload.currency,
+-    status: payload.financial_status,
+-    itemCount,
+-    itemSummary,
+-    items: payload.line_items.map((item) => ({
+-      title: item.title,
+-      variant: item.variant_title,
+-      quantity: item.quantity,
+-      price: item.price,
+-      productId: item.product_id,
+-    })),
+-    discounts: payload.discount_codes,
 +  // Get the previous scopes from the session before updating
 +  const currentSession = await db.session.findUnique({
 +    where: { id: sessionId },
 +    select: { scope: true },
-+  });
-+
+   });
+ 
+-  await db.eventLog.create({
+-    data: {
+-      shop,
+-      shopifyId: String(payload.id),
+-      topic: "ORDERS_CREATE",
+-      author: "Customer",
+-      message,
+-      diff,
+-      webhookId,
+-    },
+-  });
 +  const previousScopes = currentSession?.scope
 +    ? currentSession.scope.split(",").map(s => s.trim()).filter(Boolean)
 +    : [];
-+
+ 
+-  console.log(`[StoreGuard] Logged: ${message}`);
+-}
 +  const currentScopes = payload.current;
-+
+ 
+-/**
+- * Process an app scopes update job
+- */
+-async function processScopesUpdate(
+-  shop: string,
+-  sessionId: string,
+-  payload: { current: string[] }
+-): Promise<void> {
 +  // Update the session with new scopes
    await db.session.update({
      where: { id: sessionId },
@@ -4157,10 +4868,21 @@ index acc4c19..8a1e043 100644
    console.log(`[StoreGuard] Updated scopes for ${shop}`);
  }
  
-@@ -974,11 +1228,21 @@ async function processJob(job: {
+@@ -951,7 +1105,7 @@ async function processJob(job: {
+   const payload = JSON.parse(job.payload);
+ 
+   // Normalize topic format: PRODUCTS_UPDATE -> products/update
+-  const normalizedTopic = job.topic.toLowerCase().replace(/_/g, "/");
++  const normalizedTopic = normalizeTopic(job.topic);
+ 
+   switch (normalizedTopic) {
+     case "products/update":
+@@ -974,11 +1128,18 @@ async function processJob(job: {
      case "themes/publish":
        await processThemePublish(job.shop, payload, job.webhookId);
        break;
+-    case "orders/paid":
+-      await processOrderPaid(job.shop, payload, job.webhookId);
 +    case "discounts/create":
 +    case "discounts/update":
 +    case "discounts/delete":
@@ -4170,9 +4892,6 @@ index acc4c19..8a1e043 100644
 +    case "domains/update":
 +    case "domains/destroy":
 +      await processDomain(job.shop, normalizedTopic, payload, job.webhookId);
-+      break;
-     case "orders/paid":
-       await processOrderPaid(job.shop, payload, job.webhookId);
        break;
      case "app/scopes/update":
 -      await processScopesUpdate(job.shop, session.id, payload);
@@ -4279,6 +4998,783 @@ index 0000000..3ed08ff
 +    expect(result.locationName).toBe("W1");
 +  });
 +});
+diff --git a/insightops/app/services/jobProcessor.utils.test.ts b/insightops/app/services/jobProcessor.utils.test.ts
+new file mode 100644
+index 0000000..1cd7261
+--- /dev/null
++++ b/insightops/app/services/jobProcessor.utils.test.ts
+@@ -0,0 +1,245 @@
++import { describe, it, expect } from "vitest";
++import {
++  normalizeTopic,
++  isHandledTopic,
++  getTopicCategory,
++  diffScopes,
++  getTopicVerb,
++  HANDLED_TOPICS,
++} from "./jobProcessor.utils";
++
++describe("normalizeTopic", () => {
++  it("should lowercase and replace underscores with slashes", () => {
++    expect(normalizeTopic("PRODUCTS_UPDATE")).toBe("products/update");
++    expect(normalizeTopic("PRODUCTS_CREATE")).toBe("products/create");
++    expect(normalizeTopic("PRODUCTS_DELETE")).toBe("products/delete");
++  });
++
++  it("should handle inventory_levels topic", () => {
++    expect(normalizeTopic("inventory_levels/update")).toBe("inventory/levels/update");
++    expect(normalizeTopic("INVENTORY_LEVELS_UPDATE")).toBe("inventory/levels/update");
++  });
++
++  it("should handle themes/publish", () => {
++    expect(normalizeTopic("themes/publish")).toBe("themes/publish");
++    expect(normalizeTopic("THEMES_PUBLISH")).toBe("themes/publish");
++  });
++
++  it("should handle domain topics", () => {
++    expect(normalizeTopic("domains/create")).toBe("domains/create");
++    expect(normalizeTopic("domains/update")).toBe("domains/update");
++    expect(normalizeTopic("domains/destroy")).toBe("domains/destroy");
++    expect(normalizeTopic("DOMAINS_CREATE")).toBe("domains/create");
++    expect(normalizeTopic("DOMAINS_UPDATE")).toBe("domains/update");
++    expect(normalizeTopic("DOMAINS_DESTROY")).toBe("domains/destroy");
++  });
++
++  it("should handle app/scopes_update", () => {
++    expect(normalizeTopic("app/scopes_update")).toBe("app/scopes/update");
++    expect(normalizeTopic("APP_SCOPES_UPDATE")).toBe("app/scopes/update");
++  });
++
++  it("should handle discount topics", () => {
++    expect(normalizeTopic("discounts/create")).toBe("discounts/create");
++    expect(normalizeTopic("discounts/update")).toBe("discounts/update");
++    expect(normalizeTopic("discounts/delete")).toBe("discounts/delete");
++    expect(normalizeTopic("DISCOUNTS_CREATE")).toBe("discounts/create");
++  });
++
++  it("should handle collection topics", () => {
++    expect(normalizeTopic("collections/create")).toBe("collections/create");
++    expect(normalizeTopic("collections/update")).toBe("collections/update");
++    expect(normalizeTopic("collections/delete")).toBe("collections/delete");
++    expect(normalizeTopic("COLLECTIONS_DELETE")).toBe("collections/delete");
++  });
++
++  it("should be idempotent on already-normalized topics", () => {
++    for (const topic of HANDLED_TOPICS) {
++      expect(normalizeTopic(topic)).toBe(topic);
++    }
++  });
++});
++
++describe("isHandledTopic", () => {
++  it("should return true for all handled topics", () => {
++    for (const topic of HANDLED_TOPICS) {
++      expect(isHandledTopic(topic)).toBe(true);
++    }
++  });
++
++  it("should return false for unknown topics", () => {
++    expect(isHandledTopic("orders/create")).toBe(false);
++    expect(isHandledTopic("customers/update")).toBe(false);
++    expect(isHandledTopic("app/uninstalled")).toBe(false);
++    expect(isHandledTopic("")).toBe(false);
++    expect(isHandledTopic("foo/bar")).toBe(false);
++  });
++
++  it("should return false for unnormalized topics", () => {
++    expect(isHandledTopic("PRODUCTS_UPDATE")).toBe(false);
++    expect(isHandledTopic("THEMES_PUBLISH")).toBe(false);
++  });
++});
++
++describe("getTopicCategory", () => {
++  it("should categorize product topics", () => {
++    expect(getTopicCategory("products/update")).toBe("product");
++    expect(getTopicCategory("products/create")).toBe("product");
++    expect(getTopicCategory("products/delete")).toBe("product");
++  });
++
++  it("should categorize collection topics", () => {
++    expect(getTopicCategory("collections/create")).toBe("collection");
++    expect(getTopicCategory("collections/update")).toBe("collection");
++    expect(getTopicCategory("collections/delete")).toBe("collection");
++  });
++
++  it("should categorize inventory topics", () => {
++    expect(getTopicCategory("inventory/levels/update")).toBe("inventory");
++  });
++
++  it("should categorize theme topics", () => {
++    expect(getTopicCategory("themes/publish")).toBe("theme");
++  });
++
++  it("should categorize discount topics", () => {
++    expect(getTopicCategory("discounts/create")).toBe("discount");
++    expect(getTopicCategory("discounts/update")).toBe("discount");
++    expect(getTopicCategory("discounts/delete")).toBe("discount");
++  });
++
++  it("should categorize domain topics", () => {
++    expect(getTopicCategory("domains/create")).toBe("domain");
++    expect(getTopicCategory("domains/update")).toBe("domain");
++    expect(getTopicCategory("domains/destroy")).toBe("domain");
++  });
++
++  it("should categorize app scopes topic", () => {
++    expect(getTopicCategory("app/scopes/update")).toBe("app_scopes");
++  });
++
++  it("should return unknown for unrecognized topics", () => {
++    expect(getTopicCategory("orders/create")).toBe("unknown");
++    expect(getTopicCategory("customers/update")).toBe("unknown");
++    expect(getTopicCategory("")).toBe("unknown");
++  });
++});
++
++describe("diffScopes", () => {
++  it("should detect added scopes", () => {
++    const result = diffScopes(
++      ["read_products", "read_orders"],
++      ["read_products", "read_orders", "read_customers"]
++    );
++    expect(result.added).toEqual(["read_customers"]);
++    expect(result.removed).toEqual([]);
++  });
++
++  it("should detect removed scopes", () => {
++    const result = diffScopes(
++      ["read_products", "read_orders", "read_customers"],
++      ["read_products", "read_orders"]
++    );
++    expect(result.added).toEqual([]);
++    expect(result.removed).toEqual(["read_customers"]);
++  });
++
++  it("should detect both added and removed scopes", () => {
++    const result = diffScopes(
++      ["read_products", "read_orders"],
++      ["read_products", "read_customers", "write_products"]
++    );
++    expect(result.added).toEqual(["read_customers", "write_products"]);
++    expect(result.removed).toEqual(["read_orders"]);
++  });
++
++  it("should return empty arrays when scopes are identical", () => {
++    const result = diffScopes(
++      ["read_products", "read_orders"],
++      ["read_products", "read_orders"]
++    );
++    expect(result.added).toEqual([]);
++    expect(result.removed).toEqual([]);
++  });
++
++  it("should handle empty previous scopes (fresh install)", () => {
++    const result = diffScopes(
++      [],
++      ["read_products", "read_orders"]
++    );
++    expect(result.added).toEqual(["read_products", "read_orders"]);
++    expect(result.removed).toEqual([]);
++  });
++
++  it("should handle empty current scopes (all removed)", () => {
++    const result = diffScopes(
++      ["read_products", "read_orders"],
++      []
++    );
++    expect(result.added).toEqual([]);
++    expect(result.removed).toEqual(["read_products", "read_orders"]);
++  });
++
++  it("should handle both empty", () => {
++    const result = diffScopes([], []);
++    expect(result.added).toEqual([]);
++    expect(result.removed).toEqual([]);
++  });
++});
++
++describe("getTopicVerb", () => {
++  it("should extract verb from topic", () => {
++    expect(getTopicVerb("domains/create")).toBe("create");
++    expect(getTopicVerb("domains/update")).toBe("update");
++    expect(getTopicVerb("domains/destroy")).toBe("destroy");
++    expect(getTopicVerb("discounts/create")).toBe("create");
++    expect(getTopicVerb("discounts/delete")).toBe("delete");
++    expect(getTopicVerb("collections/update")).toBe("update");
++  });
++
++  it("should handle multi-segment topics", () => {
++    expect(getTopicVerb("inventory/levels/update")).toBe("update");
++    expect(getTopicVerb("app/scopes/update")).toBe("update");
++  });
++
++  it("should handle single-segment topics", () => {
++    expect(getTopicVerb("publish")).toBe("publish");
++  });
++});
++
++describe("HANDLED_TOPICS completeness", () => {
++  it("should include all V2 webhook topics that get queued", () => {
++    // These are all topics from CLAUDE.md V2 section that go through the job processor
++    // (app/uninstalled is handled directly, not queued)
++    const expectedTopics = [
++      "products/create",
++      "products/update",
++      "products/delete",
++      "collections/create",
++      "collections/update",
++      "collections/delete",
++      "inventory/levels/update",
++      "themes/publish",
++      "discounts/create",
++      "discounts/update",
++      "discounts/delete",
++      "domains/create",
++      "domains/update",
++      "domains/destroy",
++      "app/scopes/update",
++    ];
++
++    for (const topic of expectedTopics) {
++      expect(
++        HANDLED_TOPICS.includes(topic as typeof HANDLED_TOPICS[number]),
++        `Missing topic: ${topic}`
++      ).toBe(true);
++    }
++  });
++
++  it("should not include app/uninstalled (handled directly)", () => {
++    expect(
++      (HANDLED_TOPICS as readonly string[]).includes("app/uninstalled")
++    ).toBe(false);
++  });
++});
+diff --git a/insightops/app/services/jobProcessor.utils.ts b/insightops/app/services/jobProcessor.utils.ts
+new file mode 100644
+index 0000000..6cf56df
+--- /dev/null
++++ b/insightops/app/services/jobProcessor.utils.ts
+@@ -0,0 +1,92 @@
++/**
++ * Pure utility functions for the job processor.
++ * Extracted from jobProcessor.server.ts for testability.
++ */
++
++/**
++ * All webhook topics handled by the job processor.
++ * This is the single source of truth for topic routing.
++ */
++export const HANDLED_TOPICS = [
++  "products/update",
++  "products/create",
++  "products/delete",
++  "collections/create",
++  "collections/update",
++  "collections/delete",
++  "inventory/levels/update",
++  "themes/publish",
++  "discounts/create",
++  "discounts/update",
++  "discounts/delete",
++  "domains/create",
++  "domains/update",
++  "domains/destroy",
++  "app/scopes/update",
++] as const;
++
++export type HandledTopic = (typeof HANDLED_TOPICS)[number];
++
++/**
++ * Normalize a Shopify webhook topic to the format used in the job processor switch.
++ * Shopify sends topics as either "products/update" or "PRODUCTS_UPDATE".
++ *
++ * Examples:
++ *   "PRODUCTS_UPDATE" -> "products/update"
++ *   "inventory_levels/update" -> "inventory/levels/update"
++ *   "APP_SCOPES_UPDATE" -> "app/scopes/update"
++ *   "themes/publish" -> "themes/publish"
++ */
++export function normalizeTopic(topic: string): string {
++  return topic.toLowerCase().replace(/_/g, "/");
++}
++
++/**
++ * Check if a normalized topic is handled by the job processor.
++ */
++export function isHandledTopic(normalizedTopic: string): normalizedTopic is HandledTopic {
++  return (HANDLED_TOPICS as readonly string[]).includes(normalizedTopic);
++}
++
++/**
++ * Get the handler category for a topic. Used for logging and routing.
++ */
++export function getTopicCategory(
++  normalizedTopic: string
++): "product" | "collection" | "inventory" | "theme" | "discount" | "domain" | "app_scopes" | "unknown" {
++  if (normalizedTopic.startsWith("products/")) return "product";
++  if (normalizedTopic.startsWith("collections/")) return "collection";
++  if (normalizedTopic.startsWith("inventory/")) return "inventory";
++  if (normalizedTopic.startsWith("themes/")) return "theme";
++  if (normalizedTopic.startsWith("discounts/")) return "discount";
++  if (normalizedTopic.startsWith("domains/")) return "domain";
++  if (normalizedTopic === "app/scopes/update") return "app_scopes";
++  return "unknown";
++}
++
++/**
++ * Diff two sets of OAuth scopes.
++ * Returns added and removed scopes.
++ */
++export function diffScopes(
++  previousScopes: string[],
++  currentScopes: string[]
++): { added: string[]; removed: string[] } {
++  const added = currentScopes.filter((s) => !previousScopes.includes(s));
++  const removed = previousScopes.filter((s) => !currentScopes.includes(s));
++  return { added, removed };
++}
++
++/**
++ * Determine the verb (action) from a webhook topic.
++ * Used by domain and discount processors to decide behavior.
++ *
++ * Examples:
++ *   "domains/create" -> "create"
++ *   "domains/destroy" -> "destroy"
++ *   "discounts/update" -> "update"
++ */
++export function getTopicVerb(topic: string): string {
++  const parts = topic.split("/");
++  return parts[parts.length - 1];
++}
+diff --git a/insightops/app/services/moneySaved.test.ts b/insightops/app/services/moneySaved.test.ts
+new file mode 100644
+index 0000000..760e487
+--- /dev/null
++++ b/insightops/app/services/moneySaved.test.ts
+@@ -0,0 +1,289 @@
++import { describe, it, expect } from "vitest";
++import { estimateMoneySaved } from "./moneySaved.utils";
++import type { ProductVelocity } from "./salesVelocity.utils";
++
++function makeVelocity(overrides: Partial<ProductVelocity> = {}): ProductVelocity {
++  return {
++    productId: "123",
++    totalUnitsSold: 240,
++    totalRevenue: 7200, // avg price $30
++    orderCount: 200,
++    dailySalesRate: 8, // 8 units/day
++    dailyRevenue: 240,
++    periodDays: 30,
++    ...overrides,
++  };
++}
++
++describe("estimateMoneySaved", () => {
++  // ===================
++  // Price change events
++  // ===================
++  describe("price_change", () => {
++    it("should estimate savings for a price drop", () => {
++      // $89 -> $8.90 = $80.10 delta
++      // 8 units/day * $80.10 * 3 days * 0.5 = $961.20
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity(),
++        beforeValue: "$89.00",
++        afterValue: "$8.90",
++      });
++
++      expect(result).not.toBeNull();
++      expect(result).toBeCloseTo(961.2, 1);
++    });
++
++    it("should return null for price increases (no loss)", () => {
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity(),
++        beforeValue: "$50.00",
++        afterValue: "$75.00",
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should handle prices without dollar signs", () => {
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity({ dailySalesRate: 10 }),
++        beforeValue: "100.00",
++        afterValue: "80.00",
++      });
++
++      // $20 delta * 10/day * 3 days * 0.5 = $300
++      expect(result).toBeCloseTo(300, 1);
++    });
++
++    it("should return null when no velocity data", () => {
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: null,
++        beforeValue: "$100.00",
++        afterValue: "$50.00",
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should return null when velocity is zero", () => {
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity({ dailySalesRate: 0 }),
++        beforeValue: "$100.00",
++        afterValue: "$50.00",
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should return null for unparseable prices", () => {
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity(),
++        beforeValue: "free",
++        afterValue: "$50.00",
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should return null when beforeValue is null", () => {
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity(),
++        beforeValue: null,
++        afterValue: "$50.00",
++      });
++
++      expect(result).toBeNull();
++    });
++  });
++
++  // ========================
++  // Inventory zero events
++  // ========================
++  describe("inventory_zero", () => {
++    it("should estimate savings for out-of-stock", () => {
++      // 8 units/day * $30 avg price * 3 days * 0.5 = $360
++      const result = estimateMoneySaved({
++        eventType: "inventory_zero",
++        velocity: makeVelocity(),
++        beforeValue: "10",
++        afterValue: "0",
++      });
++
++      expect(result).not.toBeNull();
++      expect(result).toBeCloseTo(360, 1);
++    });
++
++    it("should return null when no velocity data", () => {
++      const result = estimateMoneySaved({
++        eventType: "inventory_zero",
++        velocity: null,
++        beforeValue: "10",
++        afterValue: "0",
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should return null when no sales", () => {
++      const result = estimateMoneySaved({
++        eventType: "inventory_zero",
++        velocity: makeVelocity({ dailySalesRate: 0, totalUnitsSold: 0, totalRevenue: 0 }),
++        beforeValue: "10",
++        afterValue: "0",
++      });
++
++      expect(result).toBeNull();
++    });
++  });
++
++  // ========================
++  // Inventory low events
++  // ========================
++  describe("inventory_low", () => {
++    it("should estimate savings (same formula as stockout)", () => {
++      // 8 units/day * $30 avg * 3 days * 0.5 = $360
++      const result = estimateMoneySaved({
++        eventType: "inventory_low",
++        velocity: makeVelocity(),
++        beforeValue: "10",
++        afterValue: "3",
++      });
++
++      expect(result).not.toBeNull();
++      expect(result).toBeCloseTo(360, 1);
++    });
++  });
++
++  // ========================
++  // Visibility change events
++  // ========================
++  describe("visibility_change", () => {
++    it("should estimate savings when product is hidden (draft)", () => {
++      // 8 units/day * $30 avg * 3 days * 0.5 = $360
++      const result = estimateMoneySaved({
++        eventType: "visibility_change",
++        velocity: makeVelocity(),
++        beforeValue: "active",
++        afterValue: "draft",
++      });
++
++      expect(result).not.toBeNull();
++      expect(result).toBeCloseTo(360, 1);
++    });
++
++    it("should estimate savings when product is archived", () => {
++      const result = estimateMoneySaved({
++        eventType: "visibility_change",
++        velocity: makeVelocity(),
++        beforeValue: "active",
++        afterValue: "archived",
++      });
++
++      expect(result).not.toBeNull();
++      expect(result).toBeCloseTo(360, 1);
++    });
++
++    it("should return null when product becomes visible (no loss)", () => {
++      const result = estimateMoneySaved({
++        eventType: "visibility_change",
++        velocity: makeVelocity(),
++        beforeValue: "draft",
++        afterValue: "active",
++      });
++
++      expect(result).toBeNull();
++    });
++  });
++
++  // ========================
++  // Non-applicable event types
++  // ========================
++  describe("non-applicable events", () => {
++    it("should return null for theme_publish", () => {
++      const result = estimateMoneySaved({
++        eventType: "theme_publish",
++        velocity: makeVelocity(),
++        beforeValue: null,
++        afterValue: "main",
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should return null for collection events", () => {
++      const result = estimateMoneySaved({
++        eventType: "collection_deleted",
++        velocity: makeVelocity(),
++        beforeValue: "Featured",
++        afterValue: null,
++      });
++
++      expect(result).toBeNull();
++    });
++
++    it("should return null for discount events", () => {
++      const result = estimateMoneySaved({
++        eventType: "discount_deleted",
++        velocity: makeVelocity(),
++        beforeValue: "SALE50",
++        afterValue: null,
++      });
++
++      expect(result).toBeNull();
++    });
++  });
++
++  // ========================
++  // Edge cases
++  // ========================
++  describe("edge cases", () => {
++    it("should round to 2 decimal places", () => {
++      // velocity 3/day, price delta $7.33
++      // 3 * 7.33 * 3 * 0.5 = 32.985 -> 32.98 or 32.99 (floating point)
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity({ dailySalesRate: 3 }),
++        beforeValue: "$17.33",
++        afterValue: "$10.00",
++      });
++
++      expect(result).not.toBeNull();
++      // Floating point: Math.round(32.985 * 100) / 100 = 32.98
++      expect(result).toBe(32.98);
++    });
++
++    it("should handle very high velocity products", () => {
++      // 100 units/day * $50 delta * 3 days * 0.5 = $7500
++      const result = estimateMoneySaved({
++        eventType: "price_change",
++        velocity: makeVelocity({ dailySalesRate: 100 }),
++        beforeValue: "$100.00",
++        afterValue: "$50.00",
++      });
++
++      expect(result).toBeCloseTo(7500, 1);
++    });
++
++    it("should handle very low velocity products", () => {
++      // 0.1 units/day * $30 avg * 3 days * 0.5 = $4.50
++      const result = estimateMoneySaved({
++        eventType: "inventory_zero",
++        velocity: makeVelocity({
++          dailySalesRate: 0.1,
++          totalUnitsSold: 3,
++          totalRevenue: 90,
++        }),
++        beforeValue: "5",
++        afterValue: "0",
++      });
++
++      expect(result).toBeCloseTo(4.5, 1);
++    });
++  });
++});
+diff --git a/insightops/app/services/moneySaved.utils.ts b/insightops/app/services/moneySaved.utils.ts
+new file mode 100644
+index 0000000..a7313e2
+--- /dev/null
++++ b/insightops/app/services/moneySaved.utils.ts
+@@ -0,0 +1,127 @@
++/**
++ * Money Saved Estimation Utilities for StoreGuard
++ *
++ * Estimates how much revenue a merchant saves by catching a change early.
++ * Pure functions — no database or API calls, fully testable.
++ *
++ * Formulas:
++ *   Price drop:    |priceDelta| × dailySalesRate × DISCOVERY_DAYS × CONSERVATIVE_FACTOR
++ *   Out of stock:  dailySalesRate × avgPrice × DISCOVERY_DAYS × CONSERVATIVE_FACTOR
++ *   Visibility:    dailySalesRate × avgPrice × DISCOVERY_DAYS × CONSERVATIVE_FACTOR
++ *
++ * All estimates apply a 50% conservative factor to avoid overpromising.
++ */
++
++import type { ProductVelocity } from "./salesVelocity.utils";
++
++/** How many days the issue would go unnoticed without StoreGuard */
++const DISCOVERY_DAYS = 3;
++
++/** Conservative multiplier to avoid overpromising */
++const CONSERVATIVE_FACTOR = 0.5;
++
++export interface MoneySavedInput {
++  eventType: string;
++  velocity: ProductVelocity | null;
++  beforeValue: string | null;
++  afterValue: string | null;
++}
++
++/**
++ * Parse a price string like "$89.00" or "89.00" to a number.
++ * Returns null if unparseable.
++ */
++function parsePrice(value: string | null): number | null {
++  if (!value) return null;
++  const num = parseFloat(value.replace(/^\$/, ""));
++  return isNaN(num) ? null : num;
++}
++
++/**
++ * Estimate money saved for a price change event.
++ * Only applies to price drops (where merchant would lose money per sale).
++ */
++function estimatePriceDropSavings(
++  velocity: ProductVelocity,
++  beforeValue: string | null,
++  afterValue: string | null
++): number | null {
++  const oldPrice = parsePrice(beforeValue);
++  const newPrice = parsePrice(afterValue);
++
++  if (oldPrice === null || newPrice === null) return null;
++
++  // Only price drops cost money (price increases are fine)
++  if (newPrice >= oldPrice) return null;
++
++  const priceDelta = oldPrice - newPrice;
++  return priceDelta * velocity.dailySalesRate * DISCOVERY_DAYS * CONSERVATIVE_FACTOR;
++}
++
++/**
++ * Estimate money saved for an out-of-stock event.
++ * Lost sales = velocity × avg price × days unnoticed.
++ */
++function estimateStockoutSavings(velocity: ProductVelocity): number | null {
++  if (velocity.dailySalesRate === 0) return null;
++
++  const avgPrice = velocity.totalRevenue / velocity.totalUnitsSold;
++  return velocity.dailySalesRate * avgPrice * DISCOVERY_DAYS * CONSERVATIVE_FACTOR;
++}
++
++/**
++ * Estimate money saved for a visibility change that hides a product.
++ * Same as stockout — product invisible means zero sales.
++ */
++function estimateVisibilitySavings(
++  velocity: ProductVelocity,
++  afterValue: string | null
++): number | null {
++  // Only hidden products cost money (draft/archived)
++  if (afterValue === "active") return null;
++
++  if (velocity.dailySalesRate === 0) return null;
++
++  const avgPrice = velocity.totalRevenue / velocity.totalUnitsSold;
++  return velocity.dailySalesRate * avgPrice * DISCOVERY_DAYS * CONSERVATIVE_FACTOR;
++}
++
++/**
++ * Estimate money saved by catching a change event.
++ * Returns null when estimation isn't applicable (no velocity data, no impact).
++ * Returns a positive dollar amount rounded to 2 decimal places.
++ */
++export function estimateMoneySaved(input: MoneySavedInput): number | null {
++  const { eventType, velocity, beforeValue, afterValue } = input;
++
++  if (!velocity || velocity.dailySalesRate === 0) {
++    return null;
++  }
++
++  let estimate: number | null = null;
++
++  switch (eventType) {
++    case "price_change":
++      estimate = estimatePriceDropSavings(velocity, beforeValue, afterValue);
++      break;
++    case "inventory_zero":
++      estimate = estimateStockoutSavings(velocity);
++      break;
++    case "inventory_low":
++      // Low stock is a warning — estimate savings if it would eventually hit zero
++      estimate = estimateStockoutSavings(velocity);
++      break;
++    case "visibility_change":
++      estimate = estimateVisibilitySavings(velocity, afterValue);
++      break;
++    default:
++      // Other event types (theme_publish, collection, discount, etc.) don't have
++      // quantifiable revenue impact
++      return null;
++  }
++
++  if (estimate === null || estimate <= 0) return null;
++
++  // Round to 2 decimal places
++  return Math.round(estimate * 100) / 100;
++}
 diff --git a/insightops/app/services/onboarding.test.ts b/insightops/app/services/onboarding.test.ts
 new file mode 100644
 index 0000000..d744338
@@ -4927,6 +6423,728 @@ index 00f9c75..bf40eb8 100644
 +    expect(console.warn).not.toHaveBeenCalled();
 +  });
 +});
+diff --git a/insightops/app/services/salesVelocity.server.test.ts b/insightops/app/services/salesVelocity.server.test.ts
+new file mode 100644
+index 0000000..1831773
+--- /dev/null
++++ b/insightops/app/services/salesVelocity.server.test.ts
+@@ -0,0 +1,473 @@
++import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
++import type { LineItemNode } from "./salesVelocity.server";
++
++// Mock db.server before importing the module under test
++vi.mock("../db.server", () => ({
++  default: {
++    session: {
++      findFirst: vi.fn(),
++    },
++  },
++}));
++
++// Mock shopify.server
++vi.mock("../shopify.server", () => ({
++  apiVersion: "2025-10",
++}));
++
++import db from "../db.server";
++import {
++  getShopSalesVelocity,
++  clearVelocityCache,
++  extractId,
++  parseLineItemNodes,
++} from "./salesVelocity.server";
++
++const SHOP = "test-shop.myshopify.com";
++
++function makeLineItemNode(
++  productId: string,
++  variantId: string,
++  quantity: number,
++  amount: string
++): { node: LineItemNode } {
++  return {
++    node: {
++      product: { id: `gid://shopify/Product/${productId}` },
++      variant: { id: `gid://shopify/ProductVariant/${variantId}` },
++      quantity,
++      originalUnitPriceSet: { shopMoney: { amount } },
++    },
++  };
++}
++
++function makeOrdersResponse(
++  orders: Array<{
++    id: string;
++    lineItems: Array<{ node: LineItemNode }>;
++    hasMoreLineItems?: boolean;
++    lineItemEndCursor?: string;
++  }>,
++  hasNextPage = false,
++  endCursor: string | null = null
++) {
++  return {
++    data: {
++      orders: {
++        edges: orders.map((o) => ({
++          node: {
++            id: o.id,
++            createdAt: "2026-02-15T10:00:00Z",
++            lineItems: {
++              edges: o.lineItems,
++              pageInfo: {
++                hasNextPage: o.hasMoreLineItems ?? false,
++                endCursor: o.lineItemEndCursor ?? null,
++              },
++            },
++          },
++        })),
++        pageInfo: { hasNextPage, endCursor },
++      },
++    },
++  };
++}
++
++function makeOrderLineItemsResponse(
++  lineItems: Array<{ node: LineItemNode }>,
++  hasNextPage = false,
++  endCursor: string | null = null
++) {
++  return {
++    data: {
++      order: {
++        lineItems: {
++          edges: lineItems,
++          pageInfo: { hasNextPage, endCursor },
++        },
++      },
++    },
++  };
++}
++
++describe("fetchOrders line item pagination", () => {
++  let fetchSpy: ReturnType<typeof vi.spyOn>;
++  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
++  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
++  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
++
++  beforeEach(() => {
++    clearVelocityCache();
++    vi.mocked(db.session.findFirst).mockResolvedValue({
++      id: "session-1",
++      shop: SHOP,
++      state: "active",
++      isOnline: false,
++      scope: "read_products",
++      expires: null,
++      accessToken: "test-token",
++      userId: null,
++      firstName: null,
++      lastName: null,
++      email: null,
++      accountOwner: false,
++      locale: null,
++      collaborator: null,
++      emailVerified: null,
++    });
++    fetchSpy = vi.spyOn(globalThis, "fetch");
++    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
++    consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
++    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
++  });
++
++  afterEach(() => {
++    vi.restoreAllMocks();
++  });
++
++  it("should fetch all line items when under 50 per order", async () => {
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: "gid://shopify/Order/1",
++              lineItems: [
++                makeLineItemNode("100", "200", 2, "50.00"),
++                makeLineItemNode("101", "201", 1, "25.00"),
++              ],
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    const result = await getShopSalesVelocity(SHOP, 30);
++
++    expect(result.size).toBe(2);
++    expect(result.get("100")?.totalUnitsSold).toBe(2);
++    expect(result.get("101")?.totalUnitsSold).toBe(1);
++    // Only one fetch call needed (no line item pagination)
++    expect(fetchSpy).toHaveBeenCalledTimes(1);
++  });
++
++  it("should paginate line items when order has more than 50", async () => {
++    // First call: orders query with truncated line items
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: "gid://shopify/Order/1",
++              lineItems: [makeLineItemNode("100", "200", 2, "50.00")],
++              hasMoreLineItems: true,
++              lineItemEndCursor: "li-cursor-1",
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    // Second call: additional line items for the order
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrderLineItemsResponse([
++            makeLineItemNode("101", "201", 3, "30.00"),
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    const result = await getShopSalesVelocity(SHOP, 30);
++
++    expect(result.size).toBe(2);
++    expect(result.get("100")?.totalUnitsSold).toBe(2);
++    expect(result.get("101")?.totalUnitsSold).toBe(3);
++    // Two fetch calls: orders + additional line items
++    expect(fetchSpy).toHaveBeenCalledTimes(2);
++  });
++
++  it("should log warning when line items are paginated", async () => {
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: "gid://shopify/Order/1",
++              lineItems: [makeLineItemNode("100", "200", 1, "10.00")],
++              hasMoreLineItems: true,
++              lineItemEndCursor: "li-cursor-1",
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrderLineItemsResponse([
++            makeLineItemNode("101", "201", 1, "10.00"),
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    await getShopSalesVelocity(SHOP, 30);
++
++    expect(consoleWarnSpy).toHaveBeenCalledWith(
++      expect.stringContaining("more than 50 line items")
++    );
++  });
++
++  it("should paginate through multiple pages of line items", async () => {
++    // Orders response with truncated line items
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: "gid://shopify/Order/1",
++              lineItems: [makeLineItemNode("100", "200", 1, "10.00")],
++              hasMoreLineItems: true,
++              lineItemEndCursor: "li-cursor-1",
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    // First line items page - has another page
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrderLineItemsResponse(
++            [makeLineItemNode("101", "201", 2, "20.00")],
++            true,
++            "li-cursor-2"
++          )
++        ),
++        { status: 200 }
++      )
++    );
++
++    // Second line items page - last page
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrderLineItemsResponse([
++            makeLineItemNode("102", "202", 3, "30.00"),
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    const result = await getShopSalesVelocity(SHOP, 30);
++
++    expect(result.size).toBe(3);
++    expect(result.get("100")?.totalUnitsSold).toBe(1);
++    expect(result.get("101")?.totalUnitsSold).toBe(2);
++    expect(result.get("102")?.totalUnitsSold).toBe(3);
++    expect(fetchSpy).toHaveBeenCalledTimes(3);
++  });
++
++  it("should handle line item fetch errors gracefully", async () => {
++    // Orders response with truncated line items
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: "gid://shopify/Order/1",
++              lineItems: [makeLineItemNode("100", "200", 1, "10.00")],
++              hasMoreLineItems: true,
++              lineItemEndCursor: "li-cursor-1",
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    // Line items fetch fails
++    fetchSpy.mockResolvedValueOnce(
++      new Response("Internal Server Error", { status: 500 })
++    );
++
++    const result = await getShopSalesVelocity(SHOP, 30);
++
++    // Should still have the first page of line items
++    expect(result.size).toBe(1);
++    expect(result.get("100")?.totalUnitsSold).toBe(1);
++  });
++
++  it("should pass correct orderId GID in line items pagination query", async () => {
++    const orderId = "gid://shopify/Order/12345";
++
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: orderId,
++              lineItems: [makeLineItemNode("100", "200", 1, "10.00")],
++              hasMoreLineItems: true,
++              lineItemEndCursor: "li-cursor-1",
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrderLineItemsResponse([
++            makeLineItemNode("101", "201", 1, "10.00"),
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    await getShopSalesVelocity(SHOP, 30);
++
++    // Second call should be the line items query with the correct order GID
++    const secondCallBody = JSON.parse(
++      fetchSpy.mock.calls[1][1]?.body as string
++    );
++    expect(secondCallBody.variables.orderId).toBe(orderId);
++    expect(secondCallBody.variables.cursor).toBe("li-cursor-1");
++  });
++
++  it("should handle orders with no additional line item pages needed", async () => {
++    fetchSpy.mockResolvedValueOnce(
++      new Response(
++        JSON.stringify(
++          makeOrdersResponse([
++            {
++              id: "gid://shopify/Order/1",
++              lineItems: [
++                makeLineItemNode("100", "200", 1, "10.00"),
++                makeLineItemNode("101", "201", 2, "20.00"),
++              ],
++              hasMoreLineItems: false,
++              lineItemEndCursor: undefined,
++            },
++          ])
++        ),
++        { status: 200 }
++      )
++    );
++
++    const result = await getShopSalesVelocity(SHOP, 30);
++
++    expect(result.size).toBe(2);
++    expect(fetchSpy).toHaveBeenCalledTimes(1);
++    expect(consoleWarnSpy).not.toHaveBeenCalledWith(
++      expect.stringContaining("more than 50 line items")
++    );
++  });
++});
++
++describe("extractId", () => {
++  it("should extract numeric ID from Shopify GID", () => {
++    expect(extractId("gid://shopify/Product/12345")).toBe("12345");
++    expect(extractId("gid://shopify/Order/67890")).toBe("67890");
++    expect(extractId("gid://shopify/ProductVariant/111")).toBe("111");
++  });
++
++  it("should return empty string for null/undefined", () => {
++    expect(extractId(null)).toBe("");
++    expect(extractId(undefined)).toBe("");
++  });
++
++  it("should return empty string for malformed GIDs", () => {
++    expect(extractId("")).toBe("");
++    expect(extractId("not-a-gid")).toBe("");
++    expect(extractId("gid://shopify/Product/")).toBe("");
++  });
++});
++
++describe("parseLineItemNodes", () => {
++  const makeNode = (
++    productId: string,
++    variantId: string,
++    quantity: number,
++    amount: string
++  ): LineItemNode => ({
++    product: { id: `gid://shopify/Product/${productId}` },
++    variant: { id: `gid://shopify/ProductVariant/${variantId}` },
++    quantity,
++    originalUnitPriceSet: { shopMoney: { amount } },
++  });
++
++  it("should parse valid line item nodes", () => {
++    const nodes: LineItemNode[] = [
++      makeNode("100", "200", 2, "50.00"),
++      makeNode("101", "201", 1, "25.50"),
++    ];
++
++    const result = parseLineItemNodes(nodes);
++
++    expect(result).toHaveLength(2);
++    expect(result[0]).toEqual({
++      productId: "100",
++      variantId: "200",
++      quantity: 2,
++      price: 50,
++    });
++    expect(result[1]).toEqual({
++      productId: "101",
++      variantId: "201",
++      quantity: 1,
++      price: 25.5,
++    });
++  });
++
++  it("should filter out nodes with null product", () => {
++    const nodes: LineItemNode[] = [
++      { product: null, variant: { id: "gid://shopify/ProductVariant/200" }, quantity: 1, originalUnitPriceSet: { shopMoney: { amount: "10.00" } } },
++      makeNode("100", "200", 1, "50.00"),
++    ];
++
++    const result = parseLineItemNodes(nodes);
++    expect(result).toHaveLength(1);
++    expect(result[0].productId).toBe("100");
++  });
++
++  it("should handle null price gracefully", () => {
++    const node: LineItemNode = {
++      product: { id: "gid://shopify/Product/100" },
++      variant: { id: "gid://shopify/ProductVariant/200" },
++      quantity: 3,
++      originalUnitPriceSet: null,
++    };
++
++    const result = parseLineItemNodes([node]);
++    expect(result).toHaveLength(1);
++    expect(result[0].price).toBe(0);
++  });
++
++  it("should return empty array for empty input", () => {
++    expect(parseLineItemNodes([])).toEqual([]);
++  });
++
++  it("should handle large batches of nodes", () => {
++    const nodes: LineItemNode[] = Array.from({ length: 100 }, (_, i) =>
++      makeNode(String(i), String(i + 1000), 1, "10.00")
++    );
++
++    const result = parseLineItemNodes(nodes);
++    expect(result).toHaveLength(100);
++  });
++});
+diff --git a/insightops/app/services/salesVelocity.server.ts b/insightops/app/services/salesVelocity.server.ts
+index 397dba5..cc1e030 100644
+--- a/insightops/app/services/salesVelocity.server.ts
++++ b/insightops/app/services/salesVelocity.server.ts
+@@ -17,6 +17,7 @@ import db from "../db.server";
+ import {
+   calculateProductVelocity,
+   type OrderData,
++  type OrderLineItem,
+   type ProductVelocity,
+ } from "./salesVelocity.utils";
+ 
+@@ -44,6 +45,10 @@ const ORDERS_QUERY = `#graphql
+                 }
+               }
+             }
++            pageInfo {
++              hasNextPage
++              endCursor
++            }
+           }
+         }
+       }
+@@ -55,8 +60,38 @@ const ORDERS_QUERY = `#graphql
+   }
+ `;
+ 
++const ORDER_LINE_ITEMS_QUERY = `#graphql
++  query GetOrderLineItems($orderId: ID!, $cursor: String) {
++    order(id: $orderId) {
++      lineItems(first: 50, after: $cursor) {
++        edges {
++          node {
++            product {
++              id
++            }
++            variant {
++              id
++            }
++            quantity
++            originalUnitPriceSet {
++              shopMoney {
++                amount
++              }
++            }
++          }
++        }
++        pageInfo {
++          hasNextPage
++          endCursor
++        }
++      }
++    }
++  }
++`;
++
+ // Max pages to fetch to prevent runaway pagination
+ const MAX_PAGES = 20; // 20 pages * 50 orders = 1000 orders max
++const MAX_LINE_ITEM_PAGES = 10; // 10 pages * 50 items = 500 line items per order
+ 
+ // In-memory cache (lives for the lifetime of a single request/job batch)
+ // Key: `${shop}:${periodDays}`, Value: velocity map
+@@ -67,14 +102,123 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  * Extract numeric ID from Shopify GID.
+  * "gid://shopify/Product/12345" -> "12345"
+  */
+-function extractId(gid: string | null | undefined): string {
++export function extractId(gid: string | null | undefined): string {
+   if (!gid) return "";
+   const match = gid.match(/\/(\d+)$/);
+   return match?.[1] ?? "";
+ }
+ 
++export interface LineItemNode {
++  product: { id: string } | null;
++  variant: { id: string } | null;
++  quantity: number;
++  originalUnitPriceSet: {
++    shopMoney: { amount: string };
++  } | null;
++}
++
++interface LineItemsConnection {
++  edges: Array<{ node: LineItemNode }>;
++  pageInfo: {
++    hasNextPage: boolean;
++    endCursor: string | null;
++  };
++}
++
++export function parseLineItemNodes(nodes: LineItemNode[]): OrderLineItem[] {
++  return nodes
++    .map((node) => ({
++      productId: extractId(node.product?.id),
++      variantId: extractId(node.variant?.id),
++      quantity: node.quantity,
++      price: parseFloat(
++        node.originalUnitPriceSet?.shopMoney?.amount ?? "0"
++      ),
++    }))
++    .filter((li) => li.productId !== "");
++}
++
++/**
++ * Fetch remaining line items for an order using cursor-based pagination.
++ * Called when the initial lineItems(first: 50) response indicates more pages.
++ */
++async function fetchRemainingLineItems(
++  shop: string,
++  accessToken: string,
++  orderId: string,
++  initialCursor: string
++): Promise<LineItemNode[]> {
++  const additionalNodes: LineItemNode[] = [];
++  let cursor: string | null = initialCursor;
++  let page = 0;
++
++  while (page < MAX_LINE_ITEM_PAGES) {
++    const response = await fetch(
++      `https://${shop}/admin/api/${apiVersion}/graphql.json`,
++      {
++        method: "POST",
++        headers: {
++          "X-Shopify-Access-Token": accessToken,
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({
++          query: ORDER_LINE_ITEMS_QUERY,
++          variables: { orderId, cursor },
++        }),
++      }
++    );
++
++    if (!response.ok) {
++      console.error(
++        `[StoreGuard] Order line items API returned ${response.status} for ${shop} order ${orderId}`
++      );
++      break;
++    }
++
++    const data = (await response.json()) as {
++      data?: {
++        order?: {
++          lineItems: LineItemsConnection;
++        };
++      };
++      errors?: Array<{ message: string }>;
++    };
++
++    if (data.errors?.length) {
++      console.error(
++        `[StoreGuard] Order line items GraphQL errors:`,
++        data.errors.map((e) => e.message).join(", ")
++      );
++      break;
++    }
++
++    const lineItems = data.data?.order?.lineItems;
++    if (!lineItems) break;
++
++    for (const edge of lineItems.edges) {
++      additionalNodes.push(edge.node);
++    }
++
++    if (!lineItems.pageInfo.hasNextPage || !lineItems.pageInfo.endCursor) {
++      break;
++    }
++
++    cursor = lineItems.pageInfo.endCursor;
++    page++;
++  }
++
++  if (page >= MAX_LINE_ITEM_PAGES) {
++    console.warn(
++      `[StoreGuard] Hit max line item page limit (${MAX_LINE_ITEM_PAGES}) for ${shop} order ${orderId}, some line items may be missing`
++    );
++  }
++
++  return additionalNodes;
++}
++
+ /**
+  * Fetch orders from Shopify using cursor-based pagination with date-range filtering.
++ * Line items within each order are also paginated if they exceed 50 items.
+  * Returns normalized OrderData array.
+  */
+ async function fetchOrders(
+@@ -119,18 +263,7 @@ async function fetchOrders(
+             node: {
+               id: string;
+               createdAt: string;
+-              lineItems: {
+-                edges: Array<{
+-                  node: {
+-                    product: { id: string } | null;
+-                    variant: { id: string } | null;
+-                    quantity: number;
+-                    originalUnitPriceSet: {
+-                      shopMoney: { amount: string };
+-                    } | null;
+-                  };
+-                }>;
+-              };
++              lineItems: LineItemsConnection;
+             };
+           }>;
+           pageInfo: {
+@@ -153,16 +286,25 @@ async function fetchOrders(
+     const edges = data.data?.orders?.edges ?? [];
+ 
+     for (const edge of edges) {
+-      const lineItems = edge.node.lineItems.edges
+-        .map((li) => ({
+-          productId: extractId(li.node.product?.id),
+-          variantId: extractId(li.node.variant?.id),
+-          quantity: li.node.quantity,
+-          price: parseFloat(
+-            li.node.originalUnitPriceSet?.shopMoney?.amount ?? "0"
+-          ),
+-        }))
+-        .filter((li) => li.productId !== "");
++      const allNodes: LineItemNode[] = edge.node.lineItems.edges.map((e) => e.node);
++
++      // Paginate remaining line items if the first page was truncated
++      const liPageInfo = edge.node.lineItems.pageInfo;
++      if (liPageInfo.hasNextPage && liPageInfo.endCursor) {
++        console.warn(
++          `[StoreGuard] Order ${edge.node.id} has more than 50 line items for ${shop}, fetching additional pages`
++        );
++
++        const remaining = await fetchRemainingLineItems(
++          shop,
++          accessToken,
++          edge.node.id,
++          liPageInfo.endCursor
++        );
++        allNodes.push(...remaining);
++      }
++
++      const lineItems = parseLineItemNodes(allNodes);
+ 
+       if (lineItems.length > 0) {
+         orders.push({
 diff --git a/insightops/app/services/shopService.server.ts b/insightops/app/services/shopService.server.ts
 index a11cccd..431c9f6 100644
 --- a/insightops/app/services/shopService.server.ts
@@ -5099,6 +7317,232 @@ index a11cccd..431c9f6 100644
 +  });
 +  console.log(`[StoreGuard] Onboarding completed for ${shopDomain}`);
 +}
+diff --git a/insightops/app/services/webhookCompleteness.test.ts b/insightops/app/services/webhookCompleteness.test.ts
+new file mode 100644
+index 0000000..1e8c764
+--- /dev/null
++++ b/insightops/app/services/webhookCompleteness.test.ts
+@@ -0,0 +1,220 @@
++import { describe, it, expect } from "vitest";
++import * as fs from "fs";
++import * as path from "path";
++
++/**
++ * Webhook completeness test
++ *
++ * Verifies that every webhook subscription in shopify.app.toml has a
++ * corresponding route handler, and vice versa. Also checks that required
++ * scopes are declared and the job processor handles all queued topics.
++ */
++
++const ROOT = path.resolve(__dirname, "../..");
++const TOML_PATH = path.join(ROOT, "shopify.app.toml");
++const ROUTES_DIR = path.join(ROOT, "app/routes");
++const JOB_PROCESSOR_PATH = path.join(ROOT, "app/services/jobProcessor.server.ts");
++
++/** Parse webhook topics and URIs from shopify.app.toml (simple regex, no TOML lib needed) */
++function parseTomlWebhooks(): { topics: string[]; uris: Map<string, string>; complianceTopics: string[] } {
++  const content = fs.readFileSync(TOML_PATH, "utf-8");
++  const topics: string[] = [];
++  const complianceTopics: string[] = [];
++  const uris = new Map<string, string>();
++
++  // Match [[webhooks.subscriptions]] blocks
++  const blocks = content.split("[[webhooks.subscriptions]]").slice(1);
++
++  for (const block of blocks) {
++    const uriMatch = block.match(/uri\s*=\s*"([^"]+)"/);
++    const topicsMatch = block.match(/topics\s*=\s*\[\s*"([^"]+)"\s*\]/);
++    const complianceMatch = block.match(/compliance_topics\s*=\s*\[([^\]]+)\]/);
++
++    if (complianceMatch) {
++      const matches = complianceMatch[1].matchAll(/"([^"]+)"/g);
++      for (const m of matches) {
++        complianceTopics.push(m[1]);
++      }
++    }
++
++    if (topicsMatch && uriMatch) {
++      topics.push(topicsMatch[1]);
++      uris.set(topicsMatch[1], uriMatch[1]);
++    }
++  }
++
++  return { topics, uris, complianceTopics };
++}
++
++/** Convert a webhook URI to the expected route file name */
++function uriToRouteFile(uri: string): string {
++  // "/webhooks/products/delete" -> "webhooks.products.delete.tsx"
++  return uri.replace(/^\//, "").replace(/\//g, ".") + ".tsx";
++}
++
++/** Convert a webhook topic to the normalized form used in jobProcessor switch */
++function topicToNormalized(topic: string): string {
++  // "inventory_levels/update" -> "inventory/levels/update"
++  return topic.toLowerCase().replace(/_/g, "/");
++}
++
++/** Get all webhook route handler files */
++function getWebhookRouteFiles(): string[] {
++  return fs.readdirSync(ROUTES_DIR).filter((f) => f.startsWith("webhooks.") && f.endsWith(".tsx"));
++}
++
++/** Parse job processor switch cases */
++function getJobProcessorTopics(): string[] {
++  const content = fs.readFileSync(JOB_PROCESSOR_PATH, "utf-8");
++  const cases: string[] = [];
++  const caseRegex = /case\s+"([^"]+)":/g;
++  let match;
++  while ((match = caseRegex.exec(content)) !== null) {
++    cases.push(match[1]);
++  }
++  return cases;
++}
++
++/** Parse scopes from shopify.app.toml */
++function parseTomlScopes(): string[] {
++  const content = fs.readFileSync(TOML_PATH, "utf-8");
++  const scopesMatch = content.match(/scopes\s*=\s*"([^"]+)"/);
++  return scopesMatch ? scopesMatch[1].split(",").map((s) => s.trim()) : [];
++}
++
++describe("webhook completeness", () => {
++  const { topics, uris, complianceTopics } = parseTomlWebhooks();
++  const routeFiles = getWebhookRouteFiles();
++  const processorTopics = getJobProcessorTopics();
++  const scopes = parseTomlScopes();
++
++  it("every webhook topic in shopify.app.toml has a route handler", () => {
++    const missing: string[] = [];
++
++    for (const topic of topics) {
++      const uri = uris.get(topic)!;
++      const expectedFile = uriToRouteFile(uri);
++      if (!routeFiles.includes(expectedFile)) {
++        missing.push(`${topic} -> expected ${expectedFile}`);
++      }
++    }
++
++    expect(missing, `Missing route handlers:\n${missing.join("\n")}`).toEqual([]);
++  });
++
++  it("compliance topics have a shared route handler", () => {
++    expect(complianceTopics.length).toBeGreaterThan(0);
++    expect(routeFiles).toContain("webhooks.compliance.tsx");
++  });
++
++  it("every webhook route handler has a subscription in shopify.app.toml", () => {
++    const expectedUris = new Set(uris.values());
++    // Compliance handler uses a different format
++    expectedUris.add("/webhooks/compliance");
++    // app/uninstalled is a mandatory webhook that Shopify manages
++    expectedUris.add("/webhooks/app/uninstalled");
++
++    const orphaned: string[] = [];
++    for (const file of routeFiles) {
++      const uri = "/" + file.replace(/\.tsx$/, "").replace(/\./g, "/");
++      if (!expectedUris.has(uri)) {
++        orphaned.push(`${file} -> ${uri} has no subscription`);
++      }
++    }
++
++    expect(orphaned, `Orphaned handlers (no subscription):\n${orphaned.join("\n")}`).toEqual([]);
++  });
++
++  // Topics that are handled directly in the webhook handler (not queued to job processor)
++  const DIRECT_HANDLED_TOPICS = new Set([
++    "app/uninstalled", // Handles cleanup directly (Stripe cancel, session delete)
++  ]);
++
++  it("every queued webhook topic is handled in jobProcessor switch", () => {
++    const missing: string[] = [];
++
++    for (const topic of topics) {
++      if (DIRECT_HANDLED_TOPICS.has(topic)) continue;
++
++      const normalized = topicToNormalized(topic);
++      if (!processorTopics.includes(normalized)) {
++        missing.push(`${topic} (normalized: ${normalized})`);
++      }
++    }
++
++    expect(missing, `Topics not handled in jobProcessor:\n${missing.join("\n")}`).toEqual([]);
++  });
++
++  it("required scopes are declared for subscribed webhook topics", () => {
++    // Map webhook topics to required scopes
++    // See: https://shopify.dev/docs/api/admin-rest/2025-10/resources/webhook
++    const TOPIC_SCOPE_MAP: Record<string, string> = {
++      "products/create": "read_products",
++      "products/update": "read_products",
++      "products/delete": "read_products",
++      "collections/create": "read_products",
++      "collections/update": "read_products",
++      "collections/delete": "read_products",
++      "inventory_levels/update": "read_inventory",
++      "themes/publish": "read_themes",
++      "discounts/create": "read_discounts",
++      "discounts/update": "read_discounts",
++      "discounts/delete": "read_discounts",
++      // These don't require explicit scopes:
++      // "app/uninstalled", "app/scopes_update", "domains/*"
++    };
++
++    const missing: string[] = [];
++    for (const topic of topics) {
++      const requiredScope = TOPIC_SCOPE_MAP[topic];
++      if (requiredScope && !scopes.includes(requiredScope)) {
++        missing.push(`${topic} requires scope "${requiredScope}"`);
++      }
++    }
++
++    expect(missing, `Missing scopes:\n${missing.join("\n")}`).toEqual([]);
++  });
++
++  it("has all V2 webhook topics subscribed", () => {
++    // From PRD_V2.md and CLAUDE.md V2 section
++    const requiredTopics = [
++      // V1 core
++      "products/create",
++      "products/update",
++      "products/delete",
++      "inventory_levels/update",
++      "themes/publish",
++      "app/uninstalled",
++      // V2 additions
++      "collections/create",
++      "collections/update",
++      "collections/delete",
++      "discounts/create",
++      "discounts/update",
++      "discounts/delete",
++      "domains/create",
++      "domains/update",
++      "domains/destroy",
++      "app/scopes_update",
++    ];
++
++    const allTopics = new Set([...topics, "app/uninstalled"]);
++    const missing = requiredTopics.filter((t) => !allTopics.has(t));
++
++    expect(missing, `Missing V2 webhook topics:\n${missing.join("\n")}`).toEqual([]);
++  });
++
++  it("has no duplicate webhook subscriptions", () => {
++    const seen = new Set<string>();
++    const duplicates: string[] = [];
++
++    for (const topic of topics) {
++      if (seen.has(topic)) {
++        duplicates.push(topic);
++      }
++      seen.add(topic);
++    }
++
++    expect(duplicates, `Duplicate subscriptions:\n${duplicates.join("\n")}`).toEqual([]);
++  });
++});
 diff --git a/insightops/prisma/migrations/20260218120000_unify_event_pipeline_drop_eventlog/migration.sql b/insightops/prisma/migrations/20260218120000_unify_event_pipeline_drop_eventlog/migration.sql
 new file mode 100644
 index 0000000..d2a8e22
@@ -5165,8 +7609,16 @@ index 0000000..91e58de
 @@ -0,0 +1,2 @@
 +-- AlterTable
 +ALTER TABLE "Shop" ADD COLUMN "onboardedAt" TIMESTAMP(3);
+diff --git a/insightops/prisma/migrations/20260218150000_add_money_saved_to_change_event/migration.sql b/insightops/prisma/migrations/20260218150000_add_money_saved_to_change_event/migration.sql
+new file mode 100644
+index 0000000..5794be6
+--- /dev/null
++++ b/insightops/prisma/migrations/20260218150000_add_money_saved_to_change_event/migration.sql
+@@ -0,0 +1,2 @@
++-- AlterTable
++ALTER TABLE "ChangeEvent" ADD COLUMN "moneySaved" DOUBLE PRECISION;
 diff --git a/insightops/prisma/schema.prisma b/insightops/prisma/schema.prisma
-index ba5f87d..d8ff111 100644
+index ba5f87d..3b6b759 100644
 --- a/insightops/prisma/schema.prisma
 +++ b/insightops/prisma/schema.prisma
 @@ -41,9 +41,14 @@ model Shop {
@@ -5184,7 +7636,7 @@ index ba5f87d..d8ff111 100644
    uninstalledAt   DateTime?
    // Stripe billing
    stripeCustomerId     String?  @unique // Stripe customer ID (cus_xxx)
-@@ -65,14 +70,19 @@ model ChangeEvent {
+@@ -65,14 +70,20 @@ model ChangeEvent {
    source       String    @default("webhook") // "webhook" | "sync_job" | "manual"
    importance   String    @default("medium") // "high" | "medium" | "low"
    groupId      String?   // For grouping related changes (e.g. bulk edit session)
@@ -5195,6 +7647,7 @@ index ba5f87d..d8ff111 100644
 +  diff         String?   // JSON snapshot/change data (unified from EventLog)
 +  author       String?   // Who made the change (from Shopify Events API)
 +  instantAlertSentAt DateTime? // When instant alert email was sent (null = not sent)
++  moneySaved         Float?    // Estimated revenue saved by catching this change (USD)
  
    @@index([shop])
    @@index([shop, detectedAt])
@@ -5205,7 +7658,7 @@ index ba5f87d..d8ff111 100644
  }
  
  // Product state snapshot for change detection
-@@ -81,27 +91,26 @@ model ProductSnapshot {
+@@ -81,27 +92,26 @@ model ProductSnapshot {
    shop      String
    title     String
    status    String   // "active" | "draft" | "archived"
