@@ -1,2 +1,3 @@
 # Ralphy Progress Log
 
+- [✓] 2026-02-18 18:31 - BOT-25: Paginate inventoryLevels in multi-location aggregation. In jobProcessor.server.ts, the fetchAllLocationInventory function uses inventoryLevels(first: 50) without cursor pagination. Merchants with >50 locations get wrong totals. Add cursor-based pagination to fetch ALL inventory levels, similar to how productSync handles product pagination.

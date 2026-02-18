@@ -1,10 +1,41 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   waitForRateLimit,
   getThrottleRetryMs,
   PRODUCTS_PER_PAGE,
   VARIANTS_PER_PAGE,
+  MAX_THROTTLE_RETRIES,
+  syncProducts,
 } from "./productSync.server";
+
+vi.mock("../db.server", () => {
+  const mockDb = {
+    shopSync: {
+      upsert: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+    },
+    productCache: {
+      upsert: vi.fn().mockResolvedValue({}),
+    },
+    productSnapshot: {
+      upsert: vi.fn().mockResolvedValue({}),
+    },
+    variantSnapshot: {
+      upsert: vi.fn().mockResolvedValue({}),
+    },
+    changeEvent: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+    },
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        productSnapshot: { upsert: vi.fn().mockResolvedValue({}) },
+        variantSnapshot: { upsert: vi.fn().mockResolvedValue({}) },
+      });
+    }),
+  };
+  return { default: mockDb };
+});
 
 describe("PRODUCTS_PER_PAGE", () => {
   it("should be 250 (Shopify max)", () => {
@@ -161,5 +192,165 @@ describe("waitForRateLimit", () => {
     await promise;
 
     vi.useRealTimers();
+  });
+});
+
+describe("MAX_THROTTLE_RETRIES", () => {
+  it("should be 10", () => {
+    expect(MAX_THROTTLE_RETRIES).toBe(10);
+  });
+});
+
+describe("syncProducts throttle retry cap", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeThrottledResponse() {
+    return {
+      json: () =>
+        Promise.resolve({
+          data: undefined,
+          errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }],
+          extensions: {
+            cost: {
+              requestedQueryCost: 500,
+              actualQueryCost: 0,
+              throttleStatus: {
+                maximumAvailable: 1000,
+                currentlyAvailable: 0,
+                restoreRate: 50,
+              },
+            },
+          },
+        }),
+    };
+  }
+
+  it("should abort product sync after MAX_THROTTLE_RETRIES consecutive throttles", async () => {
+    const graphqlMock = vi.fn().mockResolvedValue(makeThrottledResponse());
+    const admin = { graphql: graphqlMock };
+
+    const syncPromise = syncProducts("test-shop.myshopify.com", admin);
+
+    // Each throttle retry waits (500/50)*1000 + 1000 = 11000ms
+    // We need to advance through MAX_THROTTLE_RETRIES iterations
+    for (let i = 0; i < MAX_THROTTLE_RETRIES; i++) {
+      await vi.advanceTimersByTimeAsync(11000);
+    }
+
+    const result = await syncPromise;
+
+    expect(result.synced).toBe(0);
+    expect(graphqlMock).toHaveBeenCalledTimes(MAX_THROTTLE_RETRIES);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("hit max throttle retries")
+    );
+  });
+
+  it("should reset retry counter after a successful request", async () => {
+    let callCount = 0;
+
+    const graphqlMock = vi.fn().mockImplementation(() => {
+      callCount++;
+      // First call: throttled
+      // Second call: success with no more pages
+      if (callCount === 1) {
+        return Promise.resolve(makeThrottledResponse());
+      }
+      return Promise.resolve({
+        json: () =>
+          Promise.resolve({
+            data: {
+              products: {
+                edges: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+            extensions: {
+              cost: {
+                requestedQueryCost: 50,
+                actualQueryCost: 50,
+                throttleStatus: {
+                  maximumAvailable: 1000,
+                  currentlyAvailable: 800,
+                  restoreRate: 50,
+                },
+              },
+            },
+          }),
+      });
+    });
+
+    const admin = { graphql: graphqlMock };
+    const syncPromise = syncProducts("test-shop.myshopify.com", admin);
+
+    // Advance past the throttle wait
+    await vi.advanceTimersByTimeAsync(11000);
+
+    const result = await syncPromise;
+
+    // Should have succeeded after one throttle + one successful request
+    expect(result.synced).toBe(0);
+    expect(result.error).toBeUndefined();
+    expect(graphqlMock).toHaveBeenCalledTimes(2);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it("should not abort if throttles are non-consecutive (interspersed with successes)", async () => {
+    let callCount = 0;
+
+    const graphqlMock = vi.fn().mockImplementation(() => {
+      callCount++;
+      // Alternate: throttle, success with products + next page, throttle, success with no next page
+      if (callCount % 2 === 1 && callCount < 8) {
+        return Promise.resolve(makeThrottledResponse());
+      }
+      const hasNextPage = callCount < 7;
+      return Promise.resolve({
+        json: () =>
+          Promise.resolve({
+            data: {
+              products: {
+                edges: [],
+                pageInfo: { hasNextPage, endCursor: hasNextPage ? "cursor" : null },
+              },
+            },
+            extensions: {
+              cost: {
+                requestedQueryCost: 50,
+                actualQueryCost: 50,
+                throttleStatus: {
+                  maximumAvailable: 1000,
+                  currentlyAvailable: 800,
+                  restoreRate: 50,
+                },
+              },
+            },
+          }),
+      });
+    });
+
+    const admin = { graphql: graphqlMock };
+    const syncPromise = syncProducts("test-shop.myshopify.com", admin);
+
+    // Advance through multiple throttle waits
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(11000);
+    }
+
+    const result = await syncPromise;
+
+    // Should complete without hitting max retries
+    expect(result.error).toBeUndefined();
+    expect(console.warn).not.toHaveBeenCalled();
   });
 });

@@ -99,6 +99,12 @@ export const VARIANTS_PER_PAGE = 100;
 const THROTTLE_THRESHOLD = 200;
 
 /**
+ * Maximum number of consecutive throttle retries before aborting.
+ * Prevents infinite loops under persistent rate limiting.
+ */
+export const MAX_THROTTLE_RETRIES = 10;
+
+/**
  * Wait for Shopify's rate limit bucket to refill enough for the next query.
  * Returns immediately if sufficient budget is available.
  */
@@ -252,6 +258,7 @@ async function fetchAllVariants(
   // Paginate remaining variants
   let variantCursor = product.variants.pageInfo.endCursor;
   let hasMore = true;
+  let variantThrottleRetries = 0;
 
   while (hasMore) {
     const response = await admin.graphql(
@@ -285,10 +292,20 @@ async function fetchAllVariants(
     // Handle throttling on variant fetches
     const retryMs = getThrottleRetryMs(data);
     if (retryMs > 0) {
-      console.log(`[StoreGuard] Throttled on variant fetch, waiting ${retryMs}ms`);
+      variantThrottleRetries++;
+      if (variantThrottleRetries >= MAX_THROTTLE_RETRIES) {
+        console.warn(
+          `[StoreGuard] Variant fetch for product ${product.id} hit max throttle retries (${MAX_THROTTLE_RETRIES}), returning partial variants`
+        );
+        break;
+      }
+      console.log(`[StoreGuard] Throttled on variant fetch (attempt ${variantThrottleRetries}/${MAX_THROTTLE_RETRIES}), waiting ${retryMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, retryMs));
       continue; // Retry the same cursor
     }
+
+    // Reset counter on successful request
+    variantThrottleRetries = 0;
 
     const variantPage = data.data?.product?.variants;
     if (!variantPage) break;
@@ -341,6 +358,8 @@ export async function syncProducts(
     create: { shop, status: "syncing", startedAt: new Date() },
     update: { status: "syncing", startedAt: new Date(), error: null },
   });
+
+  let throttleRetries = 0;
 
   try {
     while (hasNextPage) {
@@ -403,10 +422,20 @@ export async function syncProducts(
       // Handle THROTTLED errors — wait and retry the same cursor
       const retryMs = getThrottleRetryMs(data);
       if (retryMs > 0) {
-        console.log(`[StoreGuard] Throttled by Shopify, waiting ${retryMs}ms before retry...`);
+        throttleRetries++;
+        if (throttleRetries >= MAX_THROTTLE_RETRIES) {
+          console.warn(
+            `[StoreGuard] Product sync hit max throttle retries (${MAX_THROTTLE_RETRIES}) for ${shop}, returning partial result (${synced} products synced)`
+          );
+          break;
+        }
+        console.log(`[StoreGuard] Throttled by Shopify (attempt ${throttleRetries}/${MAX_THROTTLE_RETRIES}), waiting ${retryMs}ms before retry...`);
         await new Promise((resolve) => setTimeout(resolve, retryMs));
         continue; // Retry with the same cursor
       }
+
+      // Reset counter on successful request
+      throttleRetries = 0;
 
       const products = data.data?.products;
 
