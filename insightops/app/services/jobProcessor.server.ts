@@ -26,6 +26,7 @@ import {
   aggregateInventoryLevels,
   type InventoryLevelNode,
 } from "./changeDetection.utils";
+import { normalizeTopic } from "./jobProcessor.utils";
 
 // Full product payload from Shopify webhook
 interface ProductPayload {
@@ -1104,7 +1105,7 @@ async function processJob(job: {
   const payload = JSON.parse(job.payload);
 
   // Normalize topic format: PRODUCTS_UPDATE -> products/update
-  const normalizedTopic = job.topic.toLowerCase().replace(/_/g, "/");
+  const normalizedTopic = normalizeTopic(job.topic);
 
   switch (normalizedTopic) {
     case "products/update":

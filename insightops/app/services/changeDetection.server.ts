@@ -20,6 +20,7 @@ import {
   serializeContext,
 } from "./contextEnricher.server";
 import { estimateMoneySaved } from "./moneySaved.utils";
+import { diffScopes } from "./jobProcessor.utils";
 
 /**
  * Change Detection Service for StoreGuard
@@ -876,8 +877,7 @@ export async function recordAppPermissionsChanged(
   }
 
   // Diff scopes
-  const added = currentScopes.filter(s => !previousScopes.includes(s));
-  const removed = previousScopes.filter(s => !currentScopes.includes(s));
+  const { added, removed } = diffScopes(previousScopes, currentScopes);
 
   // No actual change
   if (added.length === 0 && removed.length === 0) {
