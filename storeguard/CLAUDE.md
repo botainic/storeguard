@@ -6,7 +6,7 @@
 ## Project Overview
 
 **StoreGuard** is a Shopify app that monitors store changes and sends daily digest alerts.
-This is a rebuild/simplification of InsightOps, focusing on change detection and alerting.
+This is a rebuild/simplification of StoreGuard, focusing on change detection and alerting.
 
 ### Value Proposition
 Store owners lose revenue when unauthorized or accidental changes happen:
@@ -215,7 +215,7 @@ model ProductSnapshot {
 ## Implementation Plan (GitHub Issues Order)
 
 ### Milestone 0: Project & Environment Setup ✅
-- [x] Existing Shopify app scaffold (done in InsightOps)
+- [x] Existing Shopify app scaffold (done in StoreGuard)
 - [x] **ISSUE #1**: Rebrand to StoreGuard (app name, config, UI) - commit `0685820`
 - [x] **ISSUE #2**: Database schema migration (new models) - commit `0685820`
 
@@ -256,7 +256,7 @@ model ProductSnapshot {
 ## File Structure (Target State)
 
 ```
-insightops/                   # Will rename to storeguard/
+storeguard/                   # Will rename to storeguard/
 ├── app/
 │   ├── routes/
 │   │   ├── _index/           # Auth page (keep)
@@ -481,12 +481,12 @@ JOB_PROCESSOR_SECRET=xxx      # Existing
 ## Current Progress
 
 ### Completed
-- [x] Initial InsightOps codebase reviewed
+- [x] Initial StoreGuard codebase reviewed
 - [x] Architecture decision made (leverage existing)
 - [x] claude.md created
 - [x] GitHub repository renamed to storeguard
 - [x] **Milestone 0 complete** - Rebrand + schema migration (commit `0685820`)
-  - Rebranded all files from InsightOps to StoreGuard
+  - Rebranded all files from StoreGuard to StoreGuard
   - Added Shop, ChangeEvent, ProductSnapshot models
   - Added themes/publish webhook handler
   - Updated all console log prefixes
