@@ -1,0 +1,60 @@
+# Ralphy Configuration — StoreGuard V2
+# https://github.com/michaelshimeles/ralphy
+
+project:
+  name: "storeguard"
+  language: "TypeScript"
+  framework: "React Router v7 + Prisma + Shopify Polaris"
+  description: "Shopify store protection app — monitors changes that cost merchants money"
+
+commands:
+  test: "npx vitest run"
+  lint: "npx tsc --noEmit"
+  build: "npm run build"
+
+rules:
+  # Architecture
+  - "Read claude.md before making any changes — it is the project intelligence file"
+  - "Read PRD_V2.md for product context and feature requirements"
+  - "This is a Shopify embedded app using React Router v7 (SSR), Prisma ORM, PostgreSQL, Shopify Polaris Web Components"
+
+  # Code Quality
+  - "TypeScript strict mode — no 'any' types, no type assertions unless absolutely necessary"
+  - "Every new feature MUST have unit tests (Vitest). No exceptions."
+  - "Every webhook handler MUST ACK immediately (<500ms) and queue work to background jobs"
+  - "Never use mock/fake data. Show 'No data available' with helpful CTAs instead"
+  - "Handle errors gracefully — never crash, never show stack traces to users"
+
+  # Shopify Patterns
+  - "Follow the webhook processing pattern in claude.md section 'Critical Patterns'"
+  - "All new webhook subscriptions go in shopify.app.toml"
+  - "Use Shopify Polaris components for all UI — no custom CSS unless Polaris can't do it"
+  - "Check feature gates (free vs pro) before creating change events"
+
+  # UX Standards
+  - "Mobile-first design — test at 320px width minimum"
+  - "All alerts must include business context, not just 'X changed'"
+  - "Touch targets minimum 44px for mobile"
+  - "Empty states must be helpful, not blank"
+
+  # Database
+  - "Always use Prisma migrations — never raw SQL in application code"
+  - "Add proper indexes for any new query patterns"
+  - "Use cursor-based pagination for any list that could exceed 100 items"
+
+  # Security
+  - "Never log sensitive data (API keys, tokens, customer PII)"
+  - "Validate all webhook payloads with Shopify's authenticate.webhook()"
+  - "CRON_SECRET required for all cron/digest endpoints"
+
+  # Git
+  - "Small, focused commits — one concern per commit"
+  - "Commit messages: type(scope): description (e.g., feat(collections): add collection change monitoring)"
+  - "Never commit .env files or secrets"
+
+boundaries:
+  never_touch:
+    - "prisma/migrations/**"  # Don't modify existing migrations
+    - "*.lock"
+    - ".env*"
+    - "node_modules/**"
