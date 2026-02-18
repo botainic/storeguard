@@ -37,13 +37,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // Delete all data associated with this shop
         // Using the actual model names from schema.prisma
 
-        // Delete change events
+        // Delete change events (unified event model)
         await db.changeEvent.deleteMany({
-          where: { shop },
-        });
-
-        // Delete event logs
-        await db.eventLog.deleteMany({
           where: { shop },
         });
 

@@ -41,12 +41,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const result = await processPendingJobs();
 
   // 4. Check if event was created
-  const recentEvent = await db.eventLog.findFirst({
+  const recentEvent = await db.changeEvent.findFirst({
     where: {
       shop,
       topic: "INVENTORY_LEVELS_UPDATE"
     },
-    orderBy: { timestamp: "desc" }
+    orderBy: { detectedAt: "desc" }
   });
 
   return new Response(

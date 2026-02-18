@@ -50,14 +50,14 @@ model Shop {
   stripeSubscriptionId String?  // Active subscription ID (sub_xxx)
 }
 
-// Change events for alerting (core of StoreGuard)
+// Unified event model — single pipeline for all store monitoring
 model ChangeEvent {
   id           String    @id @default(uuid())
   shop         String    // Store URL
-  entityType   String    // "product" | "variant" | "theme"
+  entityType   String    // "product" | "variant" | "theme" | "collection" | "order" | "inventory"
   entityId     String    // Shopify ID of the entity
-  eventType    String    // "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish"
-  resourceName String    // Product/Theme title for display (human-readable)
+  eventType    String    // "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish" | "product_created" | "product_deleted" | "product_updated" | "collection_created" | "collection_updated" | "collection_deleted" | "inventory_updated" | "order_placed"
+  resourceName String    // Human-readable name for display
   beforeValue  String?   // Previous value (JSON or simple string)
   afterValue   String?   // New value (JSON or simple string)
   detectedAt   DateTime  @default(now())
@@ -65,13 +65,17 @@ model ChangeEvent {
   source       String    @default("webhook") // "webhook" | "sync_job" | "manual"
   importance   String    @default("medium") // "high" | "medium" | "low"
   groupId      String?   // For grouping related changes (e.g. bulk edit session)
-  webhookId    String    @unique // Deduplication
+  webhookId    String?   @unique // Deduplication (null for baseline snapshots)
+  topic        String?   // Webhook topic (e.g., "products/update") for filtering
+  diff         String?   // JSON snapshot data for diff comparison (migrated from EventLog)
+  author       String?   // Who made the change (from Shopify Events API)
 
   @@index([shop])
   @@index([shop, detectedAt])
   @@index([shop, eventType])
   @@index([digestedAt])
   @@index([shop, entityType, entityId])
+  @@index([shop, topic])
 }
 
 // Product state snapshot for change detection
@@ -85,22 +89,6 @@ model ProductSnapshot {
 
   @@unique([shop, id])
   @@index([shop])
-}
-
-model EventLog {
-  id          String   @id @default(uuid())
-  shop        String   // The store URL
-  shopifyId   String   // The Resource ID (e.g., Product ID)
-  topic       String   // e.g., "products/update"
-  author      String?  // The "Blame" retrieved via Events API
-  message     String   // Description of change
-  diff        String?  // JSON string: { old: value, new: value }
-  timestamp   DateTime @default(now())
-  webhookId   String?  @unique // Shopify webhook delivery ID for deduplication
-
-  @@index([shop])
-  @@index([shop, timestamp])
-  @@index([shop, shopifyId, topic])
 }
 
 // Lightweight product cache for resolving names on delete

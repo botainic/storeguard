@@ -39,7 +39,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Check for duplicate
   if (webhookId) {
-    const existing = await db.eventLog.findFirst({
+    const existing = await db.changeEvent.findFirst({
       where: { webhookId },
     });
     if (existing) {
@@ -64,8 +64,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     currency: order.currency || "USD",
   });
 
-  // Create an exciting message (no customer PII)
-  const message = `💰 Order ${order.name} - ${formattedAmount}`;
+  // Create message (no customer PII)
+  const message = `Order ${order.name} - ${formattedAmount}`;
 
   // Build diff with order details (no customer data)
   const diff = JSON.stringify({
@@ -88,19 +88,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   // Log the order event
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: String(order.id),
+      entityType: "order",
+      entityId: String(order.id),
+      eventType: "order_placed",
+      resourceName: message,
       topic: "ORDERS_CREATE",
       author: "Customer", // Generic - no PII
-      message,
       diff,
       webhookId,
+      importance: "low",
     },
   });
 
-  console.log(`[StoreGuard] ✅ Logged order: ${message}`);
+  console.log(`[StoreGuard] Logged order: ${message}`);
 
   return new Response();
 };

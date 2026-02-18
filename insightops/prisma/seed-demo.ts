@@ -390,8 +390,8 @@ async function seed() {
   console.log("🌱 Seeding demo data for screenshots & videos...\n");
   console.log(`   Shop: ${SHOP}`);
 
-  // Clear existing data for this shop
-  const deleted = await db.eventLog.deleteMany({
+  // Clear existing demo data for this shop
+  const deleted = await db.changeEvent.deleteMany({
     where: { shop: SHOP },
   });
   console.log(`   Cleared ${deleted.count} existing events\n`);
@@ -401,23 +401,41 @@ async function seed() {
   const allEvents = [...activityEvents, ...orderEvents];
   const now = new Date();
 
+  // Helper: map topic to entityType and eventType for unified model
+  function mapTopicToEvent(topic: string): { entityType: string; eventType: string } {
+    switch (topic) {
+      case "products/update": return { entityType: "product", eventType: "product_updated" };
+      case "products/create": return { entityType: "product", eventType: "product_created" };
+      case "products/delete": return { entityType: "product", eventType: "product_deleted" };
+      case "inventory_levels/update": return { entityType: "inventory", eventType: "inventory_updated" };
+      case "collections/create": return { entityType: "collection", eventType: "collection_created" };
+      case "collections/update": return { entityType: "collection", eventType: "collection_updated" };
+      case "ORDERS_CREATE": return { entityType: "order", eventType: "order_placed" };
+      default: return { entityType: "product", eventType: "product_updated" };
+    }
+  }
+
   console.log("📝 Creating activity events...\n");
 
   for (const event of activityEvents) {
     const hoursMs = event.hoursAgo * 60 * 60 * 1000;
     const minutesMs = (event.minutesAgo || 0) * 60 * 1000;
-    const timestamp = new Date(now.getTime() - hoursMs - minutesMs);
+    const detectedAt = new Date(now.getTime() - hoursMs - minutesMs);
+    const { entityType, eventType } = mapTopicToEvent(event.topic);
 
-    await db.eventLog.create({
+    await db.changeEvent.create({
       data: {
         shop: SHOP,
-        shopifyId: event.shopifyId,
+        entityType,
+        entityId: event.shopifyId,
+        eventType,
+        resourceName: event.message,
         topic: event.topic,
         author: event.author,
-        message: event.message,
         diff: event.diff,
-        timestamp,
+        detectedAt,
         webhookId: `demo-activity-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        importance: "low",
       },
     });
 
@@ -435,18 +453,21 @@ async function seed() {
   for (const event of orderEvents) {
     const hoursMs = event.hoursAgo * 60 * 60 * 1000;
     const minutesMs = (event.minutesAgo || 0) * 60 * 1000;
-    const timestamp = new Date(now.getTime() - hoursMs - minutesMs);
+    const detectedAt = new Date(now.getTime() - hoursMs - minutesMs);
 
-    await db.eventLog.create({
+    await db.changeEvent.create({
       data: {
         shop: SHOP,
-        shopifyId: event.shopifyId,
+        entityType: "order",
+        entityId: event.shopifyId,
+        eventType: "order_placed",
+        resourceName: event.message,
         topic: event.topic,
         author: event.author,
-        message: event.message,
         diff: event.diff,
-        timestamp,
+        detectedAt,
         webhookId: `demo-order-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        importance: "low",
       },
     });
     orderCount++;

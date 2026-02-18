@@ -321,21 +321,21 @@ async function processProductUpdate(
     }
   }
 
-  // === Legacy EventLog (for activity timeline) ===
+  // === Activity Timeline (unified ChangeEvent) ===
   // Create new snapshot
   const newSnapshot = createProductSnapshot(payload);
 
   // Get previous snapshot for diff comparison
-  // Look for any event with a snapshot (baseline or previous update)
   let oldSnapshot: ProductSnapshot | null = null;
-  const previousEvents = await db.eventLog.findMany({
+  const previousEvents = await db.changeEvent.findMany({
     where: {
       shop,
-      shopifyId: String(payload.id),
+      entityId: String(payload.id),
+      topic: "products/update",
       diff: { not: null },
     },
-    orderBy: { timestamp: "desc" },
-    take: 5, // Check recent events for a valid snapshot
+    orderBy: { detectedAt: "desc" },
+    take: 5,
   });
 
   for (const prevEvent of previousEvents) {
@@ -344,7 +344,7 @@ async function processProductUpdate(
         const prevDiff = JSON.parse(prevEvent.diff);
         if (prevDiff.snapshot) {
           oldSnapshot = prevDiff.snapshot;
-          break; // Found a valid snapshot
+          break;
         }
       } catch {
         // Invalid JSON, try next event
@@ -364,7 +364,6 @@ async function processProductUpdate(
   if (changeSummary) {
     message += ` - ${changeSummary}`;
   } else if (!oldSnapshot) {
-    // No previous snapshot to compare against - this is first tracked change
     message += ` (first tracked change)`;
   }
 
@@ -381,16 +380,19 @@ async function processProductUpdate(
     update: { title: payload.title },
   });
 
-  // Create event log
-  await db.eventLog.create({
+  // Create unified event
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: String(payload.id),
+      entityType: "product",
+      entityId: String(payload.id),
+      eventType: "product_updated",
+      resourceName: message,
       topic: "products/update",
       author,
-      message,
       diff,
       webhookId,
+      importance: "low",
     },
   });
 
@@ -437,15 +439,18 @@ async function processProductCreate(
     update: { title: payload.title },
   });
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: String(payload.id),
+      entityType: "product",
+      entityId: String(payload.id),
+      eventType: "product_created",
+      resourceName: message,
       topic: "products/create",
       author,
-      message,
       diff,
       webhookId,
+      importance: "low",
     },
   });
 
@@ -480,26 +485,29 @@ async function processProductDelete(
 
   // Fallback to previous events
   if (!productTitle) {
-    const previousEvent = await db.eventLog.findFirst({
-      where: { shop, shopifyId: productId },
-      orderBy: { timestamp: "desc" },
+    const previousEvent = await db.changeEvent.findFirst({
+      where: { shop, entityId: productId },
+      orderBy: { detectedAt: "desc" },
     });
-    const match = previousEvent?.message?.match(/"([^"]+)"/);
+    const match = previousEvent?.resourceName?.match(/"([^"]+)"/);
     if (match) productTitle = match[1];
   }
 
   const displayName = productTitle || `Product #${payload.id}`;
   const message = `Product deleted: "${displayName}"`;
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: productId,
+      entityType: "product",
+      entityId: productId,
+      eventType: "product_deleted",
+      resourceName: message,
       topic: "products/delete",
       author: "System/App",
-      message,
       diff: null,
       webhookId,
+      importance: "medium",
     },
   });
 
@@ -523,25 +531,28 @@ async function processCollection(
     const collectionId = String((payload as { id: number }).id);
     let title: string | null = null;
 
-    const previousEvent = await db.eventLog.findFirst({
-      where: { shop, shopifyId: collectionId, topic: { contains: "collections" } },
-      orderBy: { timestamp: "desc" },
+    const previousEvent = await db.changeEvent.findFirst({
+      where: { shop, entityId: collectionId, entityType: "collection" },
+      orderBy: { detectedAt: "desc" },
     });
-    const match = previousEvent?.message?.match(/"([^"]+)"/);
+    const match = previousEvent?.resourceName?.match(/"([^"]+)"/);
     if (match) title = match[1];
 
     const displayName = title || `Collection #${collectionId}`;
     const message = `Collection deleted: "${displayName}"`;
 
-    await db.eventLog.create({
+    await db.changeEvent.create({
       data: {
         shop,
-        shopifyId: collectionId,
+        entityType: "collection",
+        entityId: collectionId,
+        eventType: "collection_deleted",
+        resourceName: message,
         topic,
         author: "System/App",
-        message,
         diff: null,
         webhookId,
+        importance: "medium",
       },
     });
 
@@ -551,17 +562,21 @@ async function processCollection(
 
   const collection = payload as CollectionPayload;
   const author = (await fetchAuthor(shop, accessToken, "Collection", collection.id, verb)) || "System/App";
+  const eventType = verb === "create" ? "collection_created" : "collection_updated";
   const message = `${author} ${verb}d collection "${collection.title}"`;
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: String(collection.id),
+      entityType: "collection",
+      entityId: String(collection.id),
+      eventType,
+      resourceName: message,
       topic,
       author,
-      message,
       diff: JSON.stringify({ title: collection.title, handle: collection.handle }),
       webhookId,
+      importance: "low",
     },
   });
 
@@ -646,15 +661,15 @@ async function processInventoryUpdate(
   // When orders webhook is enabled, this will hide the "symptom" when we already have the "cause"
   if (productId) {
     try {
-      const recentOrder = await db.eventLog.findFirst({
+      const recentOrder = await db.changeEvent.findFirst({
         where: {
           shop,
           topic: "ORDERS_CREATE",
-          timestamp: {
+          detectedAt: {
             gte: new Date(Date.now() - 30 * 1000), // Within last 30 seconds
           },
         },
-        orderBy: { timestamp: "desc" },
+        orderBy: { detectedAt: "desc" },
       });
 
       if (recentOrder?.diff) {
@@ -671,17 +686,17 @@ async function processInventoryUpdate(
   }
 
   // Get previous inventory level for diff display AND for >0→0 detection
-  // Strategy: Check EventLog first (most recent), then fall back to ProductSnapshot
+  // Strategy: Check ChangeEvent first (most recent), then fall back to ProductSnapshot
   let oldAvailable: number | null = null;
   try {
-    // First, try EventLog (recent inventory updates)
-    const previousEvent = await db.eventLog.findFirst({
+    // First, try ChangeEvent (recent inventory updates)
+    const previousEvent = await db.changeEvent.findFirst({
       where: {
         shop,
-        shopifyId: String(payload.inventory_item_id),
+        entityId: String(payload.inventory_item_id),
         topic: "INVENTORY_LEVELS_UPDATE",
       },
-      orderBy: { timestamp: "desc" },
+      orderBy: { detectedAt: "desc" },
     });
 
     if (previousEvent?.diff) {
@@ -689,7 +704,7 @@ async function processInventoryUpdate(
       oldAvailable = prevDiff.available;
     }
 
-    // If no EventLog, fall back to ProductSnapshot
+    // If no ChangeEvent, fall back to ProductSnapshot
     if (oldAvailable === null && productId && variantId) {
       const snapshot = await db.productSnapshot.findUnique({
         where: { shop_id: { shop, id: productId } },
@@ -707,8 +722,8 @@ async function processInventoryUpdate(
         }
       }
     }
-  } catch (prevError) {
-    console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
+  } catch (prevErr) {
+    console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevErr);
   }
 
   // === StoreGuard: Detect inventory changes ===
@@ -807,21 +822,24 @@ async function processInventoryUpdate(
     locationId: payload.location_id,
   });
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
+      entityType: "inventory",
       // Use inventory_item_id consistently for inventory events
       // This matches the lookup in getPreviousInventory above
-      shopifyId: String(payload.inventory_item_id),
+      entityId: String(payload.inventory_item_id),
+      eventType: "inventory_updated",
+      resourceName: message,
       topic: "INVENTORY_LEVELS_UPDATE",
       author: "System/App",
-      message,
       diff,
       webhookId,
+      importance: "low",
     },
   });
 
-  console.log(`[StoreGuard] ✅ Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**

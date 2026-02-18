@@ -70,10 +70,10 @@ function scheduleJobProcessing(delayMs: number): void {
  * Check if a webhook has already been processed (deduplication)
  */
 export async function isWebhookProcessed(webhookId: string): Promise<boolean> {
-  // Check both completed jobs and event logs
+  // Check both completed jobs and change events
   const [existingJob, existingEvent] = await Promise.all([
     db.webhookJob.findUnique({ where: { webhookId } }),
-    db.eventLog.findUnique({ where: { webhookId } }),
+    db.changeEvent.findUnique({ where: { webhookId } }),
   ]);
 
   return !!(existingJob || existingEvent);
