@@ -41,6 +41,10 @@ model Shop {
   trackVisibility Boolean   @default(true)
   trackInventory  Boolean   @default(true)
   trackThemes     Boolean   @default(false) // Pro only
+  trackCollections Boolean  @default(true) // Collection monitoring (free plan)
+  trackDiscounts  Boolean   @default(false) // Pro only
+  trackAppPermissions Boolean @default(false) // Pro only
+  trackDomains    Boolean   @default(false) // Pro only
   lowStockThreshold Int     @default(5) // Alert when inventory drops below this
   instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
   installedAt     DateTime  @default(now())
@@ -65,8 +69,11 @@ model ChangeEvent {
   source       String    @default("webhook") // "webhook" | "sync_job" | "manual"
   importance   String    @default("medium") // "high" | "medium" | "low"
   groupId      String?   // For grouping related changes (e.g. bulk edit session)
-  webhookId    String    @unique // Deduplication
+  webhookId    String?   @unique // Deduplication (nullable for activity-only events)
   contextData  String?   // JSON: sales velocity, revenue impact, business context
+  topic        String?   // Webhook topic e.g. "products/update" (unified from EventLog)
+  diff         String?   // JSON snapshot/change data (unified from EventLog)
+  author       String?   // Who made the change (from Shopify Events API)
 
   @@index([shop])
   @@index([shop, detectedAt])
@@ -86,22 +93,6 @@ model ProductSnapshot {
 
   @@unique([shop, id])
   @@index([shop])
-}
-
-model EventLog {
-  id          String   @id @default(uuid())
-  shop        String   // The store URL
-  shopifyId   String   // The Resource ID (e.g., Product ID)
-  topic       String   // e.g., "products/update"
-  author      String?  // The "Blame" retrieved via Events API
-  message     String   // Description of change
-  diff        String?  // JSON string: { old: value, new: value }
-  timestamp   DateTime @default(now())
-  webhookId   String?  @unique // Shopify webhook delivery ID for deduplication
-
-  @@index([shop])
-  @@index([shop, timestamp])
-  @@index([shop, shopifyId, topic])
 }
 
 // Lightweight product cache for resolving names on delete

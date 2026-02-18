@@ -106,9 +106,9 @@ async function updateProductSnapshot(
  */
 async function createChangeEvent(data: {
   shop: string;
-  entityType: "product" | "variant" | "theme";
+  entityType: string;
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
+  eventType: string;
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -368,7 +368,8 @@ export async function detectInventoryZero(
   variantTitle: string,
   newQuantity: number,
   previousQuantity: number | null, // Must be provided from webhook processing
-  webhookId: string
+  webhookId: string,
+  locationContext?: string | null
 ): Promise<boolean> {
   // Check if shop wants to track inventory
   if (!await canTrackFeature(shop, "inventory")) {
@@ -406,9 +407,11 @@ export async function detectInventoryZero(
 
   const velocityContext = formatVelocityContext(velocity);
   const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
-  const contextData = (velocityContext || revenueImpact !== null)
-    ? JSON.stringify({ velocityContext, revenueImpact })
-    : null;
+  const ctxObj: Record<string, unknown> = {};
+  if (velocityContext) ctxObj.velocityContext = velocityContext;
+  if (revenueImpact !== null) ctxObj.revenueImpact = revenueImpact;
+  if (locationContext) ctxObj.locationContext = locationContext;
+  const contextData = Object.keys(ctxObj).length > 0 ? JSON.stringify(ctxObj) : null;
 
   await createChangeEvent({
     shop,
@@ -439,7 +442,8 @@ export async function detectLowStock(
   variantTitle: string,
   newQuantity: number,
   previousQuantity: number | null,
-  webhookId: string
+  webhookId: string,
+  locationContext?: string | null
 ): Promise<boolean> {
   // Get the shop's low stock threshold
   const threshold = await getLowStockThreshold(shop);
@@ -480,9 +484,11 @@ export async function detectLowStock(
 
   const velocityContext = formatVelocityContext(velocity);
   const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
-  const contextData = (velocityContext || revenueImpact !== null)
-    ? JSON.stringify({ velocityContext, revenueImpact })
-    : null;
+  const ctxObj: Record<string, unknown> = {};
+  if (velocityContext) ctxObj.velocityContext = velocityContext;
+  if (revenueImpact !== null) ctxObj.revenueImpact = revenueImpact;
+  if (locationContext) ctxObj.locationContext = locationContext;
+  const contextData = Object.keys(ctxObj).length > 0 ? JSON.stringify(ctxObj) : null;
 
   await createChangeEvent({
     shop,
@@ -535,6 +541,315 @@ export async function recordThemePublish(
     afterValue: "main",
     webhookId: `${webhookId}-theme`,
     importance: "high", // Theme publish is always important
+  });
+
+  return true;
+}
+
+// ============================================
+// COLLECTION CHANGE DETECTION
+// ============================================
+
+/**
+ * Record a collection created event
+ */
+export async function recordCollectionCreated(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_created",
+    resourceName: collectionTitle,
+    beforeValue: null,
+    afterValue: collectionTitle,
+    webhookId: `${webhookId}-collection-created`,
+    importance: "low",
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection updated event
+ */
+export async function recordCollectionUpdated(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_updated",
+    resourceName: collectionTitle,
+    beforeValue: null,
+    afterValue: collectionTitle,
+    webhookId: `${webhookId}-collection-updated`,
+    importance: "medium",
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection deleted event
+ * HIGH importance — deleting a collection breaks links and navigation
+ */
+export async function recordCollectionDeleted(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_deleted",
+    resourceName: collectionTitle,
+    beforeValue: collectionTitle,
+    afterValue: null,
+    webhookId: `${webhookId}-collection-deleted`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+// ============================================
+// DISCOUNT CHANGE DETECTION (Pro only)
+// ============================================
+
+/**
+ * Record a discount created event
+ */
+export async function recordDiscountCreated(
+  shop: string,
+  discountId: string,
+  discountTitle: string,
+  discountValue: string | null,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    return false;
+  }
+
+  // Large discounts (>=50%) are high importance
+  let importance: "high" | "medium" | "low" = "medium";
+  if (discountValue) {
+    const numericValue = parseFloat(discountValue);
+    if (!isNaN(numericValue) && numericValue >= 50) {
+      importance = "high";
+    }
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: discountId,
+    eventType: "discount_created",
+    resourceName: discountTitle,
+    beforeValue: null,
+    afterValue: discountValue ? `${discountValue}% off` : discountTitle,
+    webhookId: `${webhookId}-discount-created`,
+    importance,
+  });
+
+  return true;
+}
+
+/**
+ * Record a discount updated event
+ */
+export async function recordDiscountUpdated(
+  shop: string,
+  discountId: string,
+  discountTitle: string,
+  discountValue: string | null,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: discountId,
+    eventType: "discount_changed",
+    resourceName: discountTitle,
+    beforeValue: null,
+    afterValue: discountValue ? `${discountValue}% off` : discountTitle,
+    webhookId: `${webhookId}-discount-changed`,
+    importance: "medium",
+  });
+
+  return true;
+}
+
+/**
+ * Record a discount deleted event
+ * HIGH importance — deleting a discount can break promotions
+ */
+export async function recordDiscountDeleted(
+  shop: string,
+  discountId: string,
+  discountTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: discountId,
+    eventType: "discount_deleted",
+    resourceName: discountTitle,
+    beforeValue: discountTitle,
+    afterValue: null,
+    webhookId: `${webhookId}-discount-deleted`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+// ============================================
+// APP PERMISSION CHANGE DETECTION (Pro only)
+// ============================================
+
+/**
+ * Record an app permissions changed event.
+ * Diffs previous vs current scopes.
+ * HIGH importance for scope expansions (new permissions added).
+ */
+export async function recordAppPermissionsChanged(
+  shop: string,
+  previousScopes: string[],
+  currentScopes: string[],
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "app_permissions")) {
+    return false;
+  }
+
+  // Diff scopes
+  const added = currentScopes.filter(s => !previousScopes.includes(s));
+  const removed = previousScopes.filter(s => !currentScopes.includes(s));
+
+  // No actual change
+  if (added.length === 0 && removed.length === 0) {
+    return false;
+  }
+
+  // Scope expansions are HIGH importance (security risk)
+  const importance: "high" | "medium" | "low" = added.length > 0 ? "high" : "medium";
+
+  let resourceName = "App permissions";
+  if (added.length > 0 && removed.length === 0) {
+    resourceName = `${added.length} scope${added.length > 1 ? "s" : ""} added`;
+  } else if (removed.length > 0 && added.length === 0) {
+    resourceName = `${removed.length} scope${removed.length > 1 ? "s" : ""} removed`;
+  } else {
+    resourceName = `${added.length} added, ${removed.length} removed`;
+  }
+
+  const contextData = JSON.stringify({ added, removed });
+
+  await createChangeEvent({
+    shop,
+    entityType: "app",
+    entityId: shop,
+    eventType: "app_permissions_changed",
+    resourceName,
+    beforeValue: previousScopes.join(", "),
+    afterValue: currentScopes.join(", "),
+    webhookId: `${webhookId}-app-permissions`,
+    importance,
+    contextData,
+  });
+
+  return true;
+}
+
+// ============================================
+// DOMAIN CHANGE DETECTION (Pro only)
+// ============================================
+
+/**
+ * Record a domain changed event (created or updated)
+ * HIGH importance — domain changes affect SEO and store access
+ */
+export async function recordDomainChanged(
+  shop: string,
+  domainId: string,
+  domainHost: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "domains")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "domain",
+    entityId: domainId,
+    eventType: "domain_changed",
+    resourceName: domainHost,
+    beforeValue: null,
+    afterValue: domainHost,
+    webhookId: `${webhookId}-domain-changed`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+/**
+ * Record a domain removed event
+ * HIGH importance — removing a domain breaks store access
+ */
+export async function recordDomainRemoved(
+  shop: string,
+  domainId: string,
+  domainHost: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "domains")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "domain",
+    entityId: domainId,
+    eventType: "domain_removed",
+    resourceName: domainHost,
+    beforeValue: domainHost,
+    afterValue: null,
+    webhookId: `${webhookId}-domain-removed`,
+    importance: "high",
   });
 
   return true;

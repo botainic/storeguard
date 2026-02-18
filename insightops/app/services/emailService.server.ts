@@ -9,6 +9,7 @@
 
 import {
   type DigestSummary,
+  type DigestEvent,
   formatEventType,
   formatEventForEmail,
 } from "./dailyDigest.server";
@@ -79,52 +80,40 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
     day: "numeric",
   });
 
-  // Build sections for each event type
+  // Event type display config: title, color, display order
+  const eventTypeConfig: Record<string, { title: string; color: string; order: number }> = {
+    price_change: { title: "Price Changes", color: "#f59e0b", order: 1 },
+    visibility_change: { title: "Visibility Changes", color: "#8b5cf6", order: 2 },
+    inventory_low: { title: "Low Stock", color: "#f97316", order: 3 },
+    inventory_zero: { title: "Out of Stock", color: "#ef4444", order: 4 },
+    theme_publish: { title: "Theme Published", color: "#06b6d4", order: 5 },
+    collection_created: { title: "Collection Created", color: "#10b981", order: 6 },
+    collection_updated: { title: "Collection Updated", color: "#10b981", order: 7 },
+    collection_deleted: { title: "Collection Deleted", color: "#ef4444", order: 8 },
+    discount_created: { title: "Discount Created", color: "#8b5cf6", order: 9 },
+    discount_changed: { title: "Discount Changed", color: "#8b5cf6", order: 10 },
+    discount_deleted: { title: "Discount Deleted", color: "#ef4444", order: 11 },
+    app_permissions_changed: { title: "App Permissions Changed", color: "#6366f1", order: 12 },
+    domain_changed: { title: "Domain Changed", color: "#0891b2", order: 13 },
+    domain_removed: { title: "Domain Removed", color: "#ef4444", order: 14 },
+  };
+
+  // Build sections for each event type, sorted by display order
   const sections: string[] = [];
+  const sortedTypes = Object.entries(digest.eventsByType)
+    .filter(([, events]) => events.length > 0)
+    .sort(([a], [b]) => {
+      const orderA = eventTypeConfig[a]?.order ?? 99;
+      const orderB = eventTypeConfig[b]?.order ?? 99;
+      return orderA - orderB;
+    });
 
-  // Price changes
-  if (digest.eventsByType.price_change.length > 0) {
-    sections.push(buildEventSection(
-      "💰 Price Changes",
-      digest.eventsByType.price_change,
-      "#f59e0b" // amber
-    ));
-  }
-
-  // Visibility changes
-  if (digest.eventsByType.visibility_change.length > 0) {
-    sections.push(buildEventSection(
-      "👁️ Visibility Changes",
-      digest.eventsByType.visibility_change,
-      "#8b5cf6" // purple
-    ));
-  }
-
-  // Low stock
-  if (digest.eventsByType.inventory_low && digest.eventsByType.inventory_low.length > 0) {
-    sections.push(buildEventSection(
-      "⚠️ Low Stock",
-      digest.eventsByType.inventory_low,
-      "#f97316" // orange
-    ));
-  }
-
-  // Out of stock
-  if (digest.eventsByType.inventory_zero.length > 0) {
-    sections.push(buildEventSection(
-      "📦 Out of Stock",
-      digest.eventsByType.inventory_zero,
-      "#ef4444" // red
-    ));
-  }
-
-  // Theme publishes
-  if (digest.eventsByType.theme_publish.length > 0) {
-    sections.push(buildEventSection(
-      "🎨 Theme Published",
-      digest.eventsByType.theme_publish,
-      "#06b6d4" // cyan
-    ));
+  for (const [eventType, events] of sortedTypes) {
+    const config = eventTypeConfig[eventType] ?? {
+      title: eventType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      color: "#6b7280",
+    };
+    sections.push(buildEventSection(config.title, events, config.color));
   }
 
   const sectionsHtml = sections.join("");
@@ -186,7 +175,7 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
  */
 function buildEventSection(
   title: string,
-  events: DigestSummary["eventsByType"]["price_change"],
+  events: DigestEvent[],
   accentColor: string
 ): string {
   const eventItems = events
@@ -227,15 +216,19 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
     hour12: true,
   });
 
-  // Parse context data for sales velocity
+  // Parse context data for sales velocity and location
   let velocitySuffix = "";
   if (event.contextData) {
     try {
       const ctx = JSON.parse(event.contextData) as {
         velocityContext?: string | null;
+        locationContext?: string | null;
       };
+      if (ctx.locationContext) {
+        velocitySuffix += ` — ${ctx.locationContext}`;
+      }
       if (ctx.velocityContext) {
-        velocitySuffix = ` — ${ctx.velocityContext}`;
+        velocitySuffix += ` — ${ctx.velocityContext}`;
       }
     } catch {
       // Ignore invalid context
@@ -253,8 +246,26 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
       return `Now out of stock (was ${event.beforeValue} units)${velocitySuffix} • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
+    case "collection_created":
+      return `New collection created • ${time}`;
+    case "collection_updated":
+      return `Collection updated • ${time}`;
+    case "collection_deleted":
+      return `Collection deleted • ${time}`;
+    case "discount_created":
+      return `Discount created • ${time}`;
+    case "discount_changed":
+      return `${event.beforeValue ?? ""} → ${event.afterValue ?? ""} • ${time}`;
+    case "discount_deleted":
+      return `Discount deleted • ${time}`;
+    case "app_permissions_changed":
+      return `Permissions changed • ${time}`;
+    case "domain_changed":
+      return `Domain added or changed • ${time}`;
+    case "domain_removed":
+      return `Domain removed • ${time}`;
     default:
-      return `${event.beforeValue} → ${event.afterValue}${velocitySuffix} • ${time}`;
+      return `${event.beforeValue ?? ""} → ${event.afterValue ?? ""}${velocitySuffix} • ${time}`;
   }
 }
 
@@ -299,6 +310,24 @@ function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): str
       return `🚨 Out of stock: ${event.resourceName} - ${shopName}`;
     case "theme_publish":
       return `🎨 Theme published: ${event.resourceName} - ${shopName}`;
+    case "collection_created":
+      return `📁 Collection created: ${event.resourceName} - ${shopName}`;
+    case "collection_updated":
+      return `📁 Collection updated: ${event.resourceName} - ${shopName}`;
+    case "collection_deleted":
+      return `🗑️ Collection deleted: ${event.resourceName} - ${shopName}`;
+    case "discount_created":
+      return `🏷️ Discount created: ${event.resourceName} - ${shopName}`;
+    case "discount_changed":
+      return `🏷️ Discount changed: ${event.resourceName} - ${shopName}`;
+    case "discount_deleted":
+      return `🗑️ Discount deleted: ${event.resourceName} - ${shopName}`;
+    case "app_permissions_changed":
+      return `🔐 App permissions changed: ${event.resourceName} - ${shopName}`;
+    case "domain_changed":
+      return `🌐 Domain changed: ${event.resourceName} - ${shopName}`;
+    case "domain_removed":
+      return `🌐 Domain removed: ${event.resourceName} - ${shopName}`;
     default:
       return `⚡ Change detected: ${event.resourceName} - ${shopName}`;
   }
@@ -314,6 +343,15 @@ function getAlertIcon(eventType: string): string {
     case "inventory_low": return "⚠️";
     case "inventory_zero": return "🚨";
     case "theme_publish": return "🎨";
+    case "collection_created":
+    case "collection_updated": return "📁";
+    case "collection_deleted": return "🗑️";
+    case "discount_created":
+    case "discount_changed": return "🏷️";
+    case "discount_deleted": return "🗑️";
+    case "app_permissions_changed": return "🔐";
+    case "domain_changed":
+    case "domain_removed": return "🌐";
     default: return "⚡";
   }
 }
@@ -328,6 +366,15 @@ function getAlertColor(eventType: string): string {
     case "inventory_low": return "#f97316";
     case "inventory_zero": return "#ef4444";
     case "theme_publish": return "#06b6d4";
+    case "collection_created":
+    case "collection_updated": return "#10b981";
+    case "collection_deleted": return "#ef4444";
+    case "discount_created":
+    case "discount_changed": return "#8b5cf6";
+    case "discount_deleted": return "#ef4444";
+    case "app_permissions_changed": return "#6366f1";
+    case "domain_changed": return "#0891b2";
+    case "domain_removed": return "#ef4444";
     default: return "#6b7280";
   }
 }
@@ -351,17 +398,20 @@ function generateInstantAlertHtml(
     hour12: true,
   });
 
-  // Parse context data for sales velocity
+  // Parse context data for sales velocity and location
   let velocityContext: string | null = null;
   let revenueImpact: number | null = null;
+  let locationContext: string | null = null;
   if (event.contextData) {
     try {
       const ctx = JSON.parse(event.contextData) as {
         velocityContext?: string | null;
         revenueImpact?: number | null;
+        locationContext?: string | null;
       };
       velocityContext = ctx.velocityContext ?? null;
       revenueImpact = ctx.revenueImpact ?? null;
+      locationContext = ctx.locationContext ?? null;
     } catch {
       // Invalid context data
     }
@@ -377,16 +427,48 @@ function generateInstantAlertHtml(
       changeDescription = `Status changed from ${event.beforeValue} to ${event.afterValue}`;
       break;
     case "inventory_low":
-      changeDescription = `Stock dropped to ${event.afterValue} units (was ${event.beforeValue})`;
+      changeDescription = `Stock dropped to ${event.afterValue} units total (was ${event.beforeValue})`;
       break;
     case "inventory_zero":
-      changeDescription = `Now out of stock (was ${event.beforeValue} units)`;
+      changeDescription = `Now out of stock across all locations (was ${event.beforeValue} units)`;
       break;
     case "theme_publish":
       changeDescription = `"${event.resourceName}" is now your live theme`;
       break;
+    case "collection_created":
+      changeDescription = `Collection "${event.resourceName}" was created`;
+      break;
+    case "collection_updated":
+      changeDescription = `Collection "${event.resourceName}" was updated`;
+      break;
+    case "collection_deleted":
+      changeDescription = `Collection "${event.resourceName}" was deleted`;
+      break;
+    case "discount_created":
+      changeDescription = `Discount "${event.resourceName}" was created`;
+      break;
+    case "discount_changed":
+      changeDescription = `Discount "${event.resourceName}" was modified: ${event.beforeValue || ""} → ${event.afterValue || ""}`;
+      break;
+    case "discount_deleted":
+      changeDescription = `Discount "${event.resourceName}" was deleted`;
+      break;
+    case "app_permissions_changed":
+      changeDescription = `App permissions were changed: ${event.resourceName}`;
+      break;
+    case "domain_changed":
+      changeDescription = `Domain "${event.resourceName}" was added or changed`;
+      break;
+    case "domain_removed":
+      changeDescription = `Domain "${event.resourceName}" was removed`;
+      break;
     default:
       changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;
+  }
+
+  // Append location context
+  if (locationContext) {
+    changeDescription += ` — ${locationContext}`;
   }
 
   // Append sales velocity context

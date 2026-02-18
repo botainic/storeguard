@@ -42,6 +42,15 @@ const eventConfig: Record<string, { label: string; color: string }> = {
   inventory_low: { label: "Low Stock", color: "#f97316" },
   inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
   theme_publish: { label: "Theme Published", color: "#3498db" },
+  collection_created: { label: "Collection Created", color: "#10b981" },
+  collection_updated: { label: "Collection Updated", color: "#10b981" },
+  collection_deleted: { label: "Collection Deleted", color: "#e74c3c" },
+  discount_created: { label: "Discount Created", color: "#8b5cf6" },
+  discount_changed: { label: "Discount Changed", color: "#8b5cf6" },
+  discount_deleted: { label: "Discount Deleted", color: "#e74c3c" },
+  app_permissions_changed: { label: "App Permissions", color: "#6366f1" },
+  domain_changed: { label: "Domain Changed", color: "#0891b2" },
+  domain_removed: { label: "Domain Removed", color: "#e74c3c" },
 };
 
 const importanceConfig: Record<string, { label: string; color: string }> = {
@@ -197,10 +206,14 @@ export default function RecentChanges() {
                     const ctx = JSON.parse(event.contextData) as {
                       velocityContext?: string | null;
                       revenueImpact?: number | null;
+                      locationContext?: string | null;
                     };
-                    if (!ctx.velocityContext && ctx.revenueImpact === null) return null;
+                    if (!ctx.velocityContext && ctx.revenueImpact === null && !ctx.locationContext) return null;
                     return (
                       <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
+                        {ctx.locationContext && (
+                          <span style={{ marginRight: 8 }}>{ctx.locationContext}</span>
+                        )}
                         {ctx.velocityContext && (
                           <span style={{ marginRight: 8 }}>{ctx.velocityContext}</span>
                         )}

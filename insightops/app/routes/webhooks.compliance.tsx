@@ -42,11 +42,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           where: { shop },
         });
 
-        // Delete event logs
-        await db.eventLog.deleteMany({
-          where: { shop },
-        });
-
         // Delete product snapshots
         await db.productSnapshot.deleteMany({
           where: { shop },
