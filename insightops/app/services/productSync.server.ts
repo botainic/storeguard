@@ -23,12 +23,24 @@ interface ProductNode {
   status: string;
   tags: string[];
   images: { edges: Array<{ node: { id: string } }> };
-  variants: { edges: Array<{ node: ProductVariant }> };
+  variants: {
+    edges: Array<{ node: ProductVariant }>;
+    pageInfo: {
+      hasNextPage: boolean;
+      endCursor: string | null;
+    };
+  };
   options: ProductOption[];
 }
 
 interface ProductEdge {
   node: ProductNode;
+}
+
+interface ThrottleStatus {
+  maximumAvailable: number;
+  currentlyAvailable: number;
+  restoreRate: number;
 }
 
 interface ProductsResponse {
@@ -41,6 +53,95 @@ interface ProductsResponse {
       };
     };
   };
+  extensions?: {
+    cost: {
+      requestedQueryCost: number;
+      actualQueryCost: number;
+      throttleStatus: ThrottleStatus;
+    };
+  };
+  errors?: Array<{ message: string; extensions?: { code: string } }>;
+}
+
+interface VariantsResponse {
+  data?: {
+    product: {
+      variants: {
+        edges: Array<{ node: ProductVariant }>;
+        pageInfo: {
+          hasNextPage: boolean;
+          endCursor: string | null;
+        };
+      };
+    };
+  };
+  extensions?: {
+    cost: {
+      requestedQueryCost: number;
+      actualQueryCost: number;
+      throttleStatus: ThrottleStatus;
+    };
+  };
+  errors?: Array<{ message: string; extensions?: { code: string } }>;
+}
+
+/** Batch size for product pagination (Shopify max is 250) */
+export const PRODUCTS_PER_PAGE = 250;
+
+/** Batch size for variant pagination within a product */
+export const VARIANTS_PER_PAGE = 100;
+
+/**
+ * Minimum available query cost before we pause to let the bucket refill.
+ * Shopify's default bucket is 1000 points with 50/sec restore rate.
+ * A products query with 250 products costs ~500+ points.
+ */
+const THROTTLE_THRESHOLD = 200;
+
+/**
+ * Wait for Shopify's rate limit bucket to refill enough for the next query.
+ * Returns immediately if sufficient budget is available.
+ */
+export async function waitForRateLimit(
+  throttleStatus: ThrottleStatus | undefined,
+  queryCost: number
+): Promise<void> {
+  if (!throttleStatus) return;
+
+  const { currentlyAvailable, restoreRate } = throttleStatus;
+
+  if (currentlyAvailable < Math.max(queryCost, THROTTLE_THRESHOLD)) {
+    const pointsNeeded = queryCost - currentlyAvailable;
+    const waitSeconds = Math.ceil(pointsNeeded / restoreRate) + 1;
+    console.log(
+      `[StoreGuard] Rate limit: ${currentlyAvailable} points available, need ~${queryCost}. Waiting ${waitSeconds}s...`
+    );
+    await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+  }
+}
+
+/**
+ * Check if a GraphQL response contains a THROTTLED error and extract retry-after info.
+ * Returns the number of ms to wait, or 0 if not throttled.
+ */
+export function getThrottleRetryMs(
+  response: ProductsResponse | VariantsResponse
+): number {
+  if (!response.errors) return 0;
+
+  const throttled = response.errors.some(
+    (e) => e.extensions?.code === "THROTTLED"
+  );
+  if (!throttled) return 0;
+
+  // Use cost info to calculate wait, or default to 2s
+  const restoreRate = response.extensions?.cost?.throttleStatus?.restoreRate ?? 50;
+  const needed = response.extensions?.cost?.requestedQueryCost ?? 100;
+  const available = response.extensions?.cost?.throttleStatus?.currentlyAvailable ?? 0;
+  const deficit = needed - available;
+
+  if (deficit <= 0) return 2000;
+  return Math.ceil((deficit / restoreRate) * 1000) + 1000;
 }
 
 // Snapshot format (matches jobProcessor.server.ts)
@@ -127,12 +228,97 @@ export async function getSyncStatus(shop: string): Promise<{
 }
 
 /**
+ * Fetch all variants for a product using cursor-based pagination.
+ * Most products have <10 variants, but Shopify supports up to 2000.
+ * Only makes additional requests if the first page indicates more variants exist.
+ */
+async function fetchAllVariants(
+  admin: {
+    graphql: (
+      query: string,
+      options?: { variables?: Record<string, unknown> }
+    ) => Promise<Response>;
+  },
+  product: ProductNode
+): Promise<ProductVariant[]> {
+  // Collect variants from the initial query
+  const allVariants = product.variants.edges.map((e) => e.node);
+
+  // If no more pages, we're done (most products)
+  if (!product.variants.pageInfo.hasNextPage) {
+    return allVariants;
+  }
+
+  // Paginate remaining variants
+  let variantCursor = product.variants.pageInfo.endCursor;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await admin.graphql(
+      `#graphql
+        query GetProductVariants($productId: ID!, $cursor: String) {
+          product(id: $productId) {
+            variants(first: ${VARIANTS_PER_PAGE}, after: $cursor) {
+              edges {
+                node {
+                  id
+                  title
+                  price
+                  compareAtPrice
+                  sku
+                  inventoryQuantity
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `,
+      { variables: { productId: product.id, cursor: variantCursor } }
+    );
+
+    const data: VariantsResponse = await response.json();
+
+    // Handle throttling on variant fetches
+    const retryMs = getThrottleRetryMs(data);
+    if (retryMs > 0) {
+      console.log(`[StoreGuard] Throttled on variant fetch, waiting ${retryMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, retryMs));
+      continue; // Retry the same cursor
+    }
+
+    const variantPage = data.data?.product?.variants;
+    if (!variantPage) break;
+
+    for (const edge of variantPage.edges) {
+      allVariants.push(edge.node);
+    }
+
+    // Proactive rate limit wait
+    await waitForRateLimit(
+      data.extensions?.cost?.throttleStatus,
+      data.extensions?.cost?.actualQueryCost ?? 10
+    );
+
+    hasMore = variantPage.pageInfo.hasNextPage;
+    variantCursor = variantPage.pageInfo.endCursor;
+  }
+
+  return allVariants;
+}
+
+/**
  * Sync all products from Shopify to our ProductCache and create baseline snapshots.
  * This ensures we have:
  * 1. Product names available for delete events
  * 2. Baseline snapshots so the first update shows what changed
  * 3. ProductSnapshot records for StoreGuard change detection
- * Uses cursor-based pagination to handle stores with many products.
+ *
+ * Uses cursor-based pagination to handle stores with 100K+ products.
+ * Includes Shopify GraphQL rate limit awareness to avoid throttling.
  */
 export async function syncProducts(
   shop: string,
@@ -161,7 +347,7 @@ export async function syncProducts(
       const response = await admin.graphql(
         `#graphql
           query GetProducts($cursor: String) {
-            products(first: 50, after: $cursor) {
+            products(first: ${PRODUCTS_PER_PAGE}, after: $cursor) {
               edges {
                 node {
                   id
@@ -178,7 +364,7 @@ export async function syncProducts(
                       }
                     }
                   }
-                  variants(first: 10) {
+                  variants(first: ${VARIANTS_PER_PAGE}) {
                     edges {
                       node {
                         id
@@ -188,6 +374,10 @@ export async function syncProducts(
                         sku
                         inventoryQuantity
                       }
+                    }
+                    pageInfo {
+                      hasNextPage
+                      endCursor
                     }
                   }
                   options {
@@ -209,18 +399,36 @@ export async function syncProducts(
       );
 
       const data: ProductsResponse = await response.json();
+
+      // Handle THROTTLED errors — wait and retry the same cursor
+      const retryMs = getThrottleRetryMs(data);
+      if (retryMs > 0) {
+        console.log(`[StoreGuard] Throttled by Shopify, waiting ${retryMs}ms before retry...`);
+        await new Promise((resolve) => setTimeout(resolve, retryMs));
+        continue; // Retry with the same cursor
+      }
+
       const products = data.data?.products;
 
       if (!products) {
-        console.error("[StoreGuard] Failed to fetch products from GraphQL");
+        console.error("[StoreGuard] Failed to fetch products from GraphQL", data.errors);
         break;
       }
+
+      // Proactive rate limit: wait if we're running low on points
+      await waitForRateLimit(
+        data.extensions?.cost?.throttleStatus,
+        data.extensions?.cost?.actualQueryCost ?? 50
+      );
 
       // Upsert products into cache and create baseline EventLog entries
       for (const edge of products.edges) {
         const product = edge.node;
         // Extract numeric ID from GID (gid://shopify/Product/123)
         const numericId = product.id.split("/").pop() || product.id;
+
+        // Fetch all variants (handles products with >100 variants via pagination)
+        const allVariants = await fetchAllVariants(admin, product);
 
         // Upsert into cache for delete name resolution
         await db.productCache.upsert({
@@ -242,11 +450,11 @@ export async function syncProducts(
 
         // === StoreGuard: Create ProductSnapshot for change detection ===
         // This is what changeDetection.server.ts uses to compare before/after
-        const productSnapshotVariants = product.variants.edges.map((v) => ({
-          id: v.node.id.split("/").pop() || v.node.id,
-          title: v.node.title,
-          price: v.node.price,
-          inventoryQuantity: v.node.inventoryQuantity ?? 0,
+        const productSnapshotVariants = allVariants.map((v) => ({
+          id: v.id.split("/").pop() || v.id,
+          title: v.title,
+          price: v.price,
+          inventoryQuantity: v.inventoryQuantity ?? 0,
         }));
 
         await db.productSnapshot.upsert({
@@ -265,6 +473,15 @@ export async function syncProducts(
           },
         });
 
+        // Build a synthetic ProductNode with all variants for snapshot creation
+        const fullProduct: ProductNode = {
+          ...product,
+          variants: {
+            edges: allVariants.map((v) => ({ node: v })),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+
         // Ensure we have a baseline snapshot for this product (legacy EventLog).
         // IMPORTANT: ProductCache can exist from webhooks, but that doesn't mean a baseline snapshot exists.
         // Only `products/snapshot` events count as baselines.
@@ -274,7 +491,7 @@ export async function syncProducts(
 
         if (!existingBaseline || force) {
           // Create baseline snapshot so future updates can show diffs
-          const snapshot = createSnapshotFromGraphQL(product);
+          const snapshot = createSnapshotFromGraphQL(fullProduct);
           const diff = JSON.stringify({
             snapshot: snapshot,
             changes: [], // No changes for baseline
@@ -313,7 +530,7 @@ export async function syncProducts(
         synced++;
 
         // Persist progress frequently so the UI doesn't appear "stuck".
-        if (synced % 10 === 0) {
+        if (synced % 50 === 0) {
           await db.shopSync.update({
             where: { shop },
             data: { syncedProducts: synced },
@@ -331,7 +548,7 @@ export async function syncProducts(
       });
 
       // Log progress for large catalogs
-      if (synced % 100 === 0 && synced > 0) {
+      if (synced % 500 === 0 && synced > 0) {
         console.log(`[StoreGuard] Sync progress: ${synced} products...`);
       }
     }
