@@ -21,7 +21,7 @@ COPY . .
 
 # Generate Prisma client and build
 RUN npx prisma generate
-RUN NODE_OPTIONS="--max-old-space-size=512" npm run build
+RUN npm run build
 
 # Remove dev dependencies after build
 RUN npm prune --production
