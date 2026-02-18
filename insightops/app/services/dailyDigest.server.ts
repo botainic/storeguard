@@ -33,6 +33,8 @@ export interface DigestSummary {
     inventory_low: DigestEvent[];
     inventory_zero: DigestEvent[];
     theme_publish: DigestEvent[];
+    domain_changed: DigestEvent[];
+    domain_removed: DigestEvent[];
   };
 }
 
@@ -116,6 +118,8 @@ export async function generateDigestForShop(shopDomain: string): Promise<DigestS
     inventory_low: [] as DigestEvent[],
     inventory_zero: [] as DigestEvent[],
     theme_publish: [] as DigestEvent[],
+    domain_changed: [] as DigestEvent[],
+    domain_removed: [] as DigestEvent[],
   };
 
   let highPriorityCount = 0;
@@ -185,6 +189,8 @@ export function getEventIdsFromDigest(digest: DigestSummary): string[] {
     ...digest.eventsByType.inventory_low,
     ...digest.eventsByType.inventory_zero,
     ...digest.eventsByType.theme_publish,
+    ...digest.eventsByType.domain_changed,
+    ...digest.eventsByType.domain_removed,
   ];
 
   return allEvents.map((e) => e.id);
@@ -205,6 +211,10 @@ export function formatEventType(eventType: string): string {
       return "Out of Stock";
     case "theme_publish":
       return "Theme Published";
+    case "domain_changed":
+      return "Domain Changed";
+    case "domain_removed":
+      return "Domain Removed";
     default:
       return eventType;
   }
@@ -231,6 +241,10 @@ export function formatEventForEmail(event: DigestEvent): string {
       return `${event.resourceName}: now out of stock (was ${event.beforeValue} units) (${time})`;
     case "theme_publish":
       return `"${event.resourceName}" is now your live theme (${time})`;
+    case "domain_changed":
+      return `${event.resourceName}: ${event.afterValue} (${time})`;
+    case "domain_removed":
+      return `${event.resourceName}: domain removed (${time})`;
     default:
       return `${event.resourceName}: ${event.beforeValue} → ${event.afterValue} (${time})`;
   }

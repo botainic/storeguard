@@ -104,9 +104,9 @@ async function updateProductSnapshot(
  */
 async function createChangeEvent(data: {
   shop: string;
-  entityType: "product" | "variant" | "theme";
+  entityType: "product" | "variant" | "theme" | "domain";
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
+  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish" | "domain_changed" | "domain_removed";
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -484,6 +484,81 @@ export async function processProductChanges(
   const statusChange = await detectVisibilityChanges(shop, product, webhookId);
 
   return { priceChanges, statusChange };
+}
+
+// Domain payload from Shopify webhook
+interface DomainPayload {
+  id: number;
+  host: string;
+  ssl_enabled: boolean;
+  localization?: {
+    country: string | null;
+    default_locale: string;
+    alternate_locales: string[];
+  };
+}
+
+/**
+ * Record a domain change event (domains/create or domains/update)
+ * Domain changes are HIGH importance — can break SEO, links, and customer access
+ */
+export async function recordDomainChange(
+  shop: string,
+  domain: DomainPayload,
+  webhookId: string,
+  action: "added" | "updated"
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "domains")) {
+    console.log(`[StoreGuard] Domain tracking disabled for ${shop} (Free plan or disabled)`);
+    return false;
+  }
+
+  const afterValue = action === "added"
+    ? `Domain "${domain.host}" added`
+    : `Domain "${domain.host}" updated`;
+
+  await createChangeEvent({
+    shop,
+    entityType: "domain",
+    entityId: String(domain.id),
+    eventType: "domain_changed",
+    resourceName: domain.host,
+    beforeValue: null,
+    afterValue,
+    webhookId: `${webhookId}-domain`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+/**
+ * Record a domain removal event (domains/destroy)
+ * Domain removal is HIGH importance — breaks SEO, bookmarks, and customer access
+ */
+export async function recordDomainRemoval(
+  shop: string,
+  domain: DomainPayload,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "domains")) {
+    console.log(`[StoreGuard] Domain tracking disabled for ${shop} (Free plan or disabled)`);
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "domain",
+    entityId: String(domain.id),
+    eventType: "domain_removed",
+    resourceName: domain.host,
+    beforeValue: domain.host,
+    afterValue: null,
+    webhookId: `${webhookId}-domain`,
+    importance: "high",
+  });
+
+  return true;
 }
 
 /**

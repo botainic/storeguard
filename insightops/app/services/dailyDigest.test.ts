@@ -37,6 +37,8 @@ function makeDigest(overrides: Partial<DigestSummary> = {}): DigestSummary {
       inventory_low: [],
       inventory_zero: [],
       theme_publish: [],
+      domain_changed: [],
+      domain_removed: [],
     },
     ...overrides,
   };
@@ -56,16 +58,20 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [makeEvent({ id: "iz-1" })],
         theme_publish: [makeEvent({ id: "tp-1" })],
+        domain_changed: [makeEvent({ id: "dc-1" })],
+        domain_removed: [makeEvent({ id: "dr-1" })],
       },
     });
 
     const ids = getEventIdsFromDigest(digest);
-    expect(ids).toHaveLength(5);
+    expect(ids).toHaveLength(7);
     expect(ids).toContain("pc-1");
     expect(ids).toContain("pc-2");
     expect(ids).toContain("vc-1");
     expect(ids).toContain("iz-1");
     expect(ids).toContain("tp-1");
+    expect(ids).toContain("dc-1");
+    expect(ids).toContain("dr-1");
   });
 
   it("should handle digest with events in only one category", () => {
@@ -76,6 +82,8 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [],
         theme_publish: [],
+        domain_changed: [],
+        domain_removed: [],
       },
     });
 
@@ -102,6 +110,14 @@ describe("formatEventType", () => {
 
   it("should format theme_publish", () => {
     expect(formatEventType("theme_publish")).toBe("Theme Published");
+  });
+
+  it("should format domain_changed", () => {
+    expect(formatEventType("domain_changed")).toBe("Domain Changed");
+  });
+
+  it("should format domain_removed", () => {
+    expect(formatEventType("domain_removed")).toBe("Domain Removed");
   });
 
   it("should return raw event type for unknown types", () => {
@@ -180,5 +196,33 @@ describe("formatEventForEmail", () => {
     const result = formatEventForEmail(event);
     expect(result).toContain("Dawn 2.0");
     expect(result).toContain("live theme");
+  });
+
+  it("should format domain changed event", () => {
+    const event = makeEvent({
+      eventType: "domain_changed",
+      entityType: "domain",
+      resourceName: "shop.example.com",
+      beforeValue: null,
+      afterValue: 'Domain "shop.example.com" added',
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("shop.example.com");
+    expect(result).toContain("added");
+  });
+
+  it("should format domain removed event", () => {
+    const event = makeEvent({
+      eventType: "domain_removed",
+      entityType: "domain",
+      resourceName: "old.example.com",
+      beforeValue: "old.example.com",
+      afterValue: null,
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("old.example.com");
+    expect(result).toContain("domain removed");
   });
 });

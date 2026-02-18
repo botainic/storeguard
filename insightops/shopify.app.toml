@@ -43,6 +43,18 @@ api_version = "2025-10"
   topics = [ "themes/publish" ]
   uri = "/webhooks/themes/publish"
 
+  [[webhooks.subscriptions]]
+  topics = [ "domains/create" ]
+  uri = "/webhooks/domains/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "domains/update" ]
+  uri = "/webhooks/domains/update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "domains/destroy" ]
+  uri = "/webhooks/domains/destroy"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 # StoreGuard scopes: products for change detection, inventory for stock alerts, themes for publish tracking

@@ -127,6 +127,24 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
     ));
   }
 
+  // Domain changes
+  if (digest.eventsByType.domain_changed.length > 0) {
+    sections.push(buildEventSection(
+      "🌐 Domain Changed",
+      digest.eventsByType.domain_changed,
+      "#0ea5e9" // sky blue
+    ));
+  }
+
+  // Domain removals
+  if (digest.eventsByType.domain_removed.length > 0) {
+    sections.push(buildEventSection(
+      "🌐 Domain Removed",
+      digest.eventsByType.domain_removed,
+      "#dc2626" // red
+    ));
+  }
+
   const sectionsHtml = sections.join("");
 
   // Summary stats
@@ -238,6 +256,10 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
       return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
+    case "domain_changed":
+      return `${event.afterValue} • ${time}`;
+    case "domain_removed":
+      return `Domain removed — may break SEO and customer links • ${time}`;
     default:
       return `${event.beforeValue} → ${event.afterValue} • ${time}`;
   }
@@ -283,6 +305,10 @@ function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): str
       return `🚨 Out of stock: ${event.resourceName} - ${shopName}`;
     case "theme_publish":
       return `🎨 Theme published: ${event.resourceName} - ${shopName}`;
+    case "domain_changed":
+      return `🌐 Domain changed: ${event.resourceName} - ${shopName}`;
+    case "domain_removed":
+      return `🚨 Domain removed: ${event.resourceName} - ${shopName}`;
     default:
       return `⚡ Change detected: ${event.resourceName} - ${shopName}`;
   }
@@ -298,6 +324,8 @@ function getAlertIcon(eventType: string): string {
     case "inventory_low": return "⚠️";
     case "inventory_zero": return "🚨";
     case "theme_publish": return "🎨";
+    case "domain_changed": return "🌐";
+    case "domain_removed": return "🌐";
     default: return "⚡";
   }
 }
@@ -312,6 +340,8 @@ function getAlertColor(eventType: string): string {
     case "inventory_low": return "#f97316";
     case "inventory_zero": return "#ef4444";
     case "theme_publish": return "#06b6d4";
+    case "domain_changed": return "#0ea5e9";
+    case "domain_removed": return "#dc2626";
     default: return "#6b7280";
   }
 }
@@ -352,6 +382,12 @@ function generateInstantAlertHtml(
       break;
     case "theme_publish":
       changeDescription = `"${event.resourceName}" is now your live theme`;
+      break;
+    case "domain_changed":
+      changeDescription = event.afterValue || `Domain "${event.resourceName}" was changed`;
+      break;
+    case "domain_removed":
+      changeDescription = `Domain "${event.resourceName}" was removed — this may break SEO, bookmarks, and customer access`;
       break;
     default:
       changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;
