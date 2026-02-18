@@ -42,6 +42,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           where: { shop },
         });
 
+        // Delete variant snapshots (must come before product snapshots due to FK)
+        await db.variantSnapshot.deleteMany({
+          where: { productSnapshot: { shop } },
+        });
+
         // Delete product snapshots
         await db.productSnapshot.deleteMany({
           where: { shop },
