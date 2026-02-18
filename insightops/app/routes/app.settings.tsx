@@ -28,6 +28,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   const trackVisibility = formData.get("trackVisibility") === "on";
   const trackInventory = formData.get("trackInventory") === "on";
   const trackThemes = formData.get("trackThemes") === "on";
+  const trackCollections = formData.get("trackCollections") === "on";
+  const trackDiscounts = formData.get("trackDiscounts") === "on";
+  const trackAppPermissions = formData.get("trackAppPermissions") === "on";
+  const trackDomains = formData.get("trackDomains") === "on";
   const lowStockThreshold = parseInt(formData.get("lowStockThreshold") as string) || 5;
   const instantAlerts = formData.get("instantAlerts") === "on";
 
@@ -50,6 +54,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
       trackVisibility,
       trackInventory,
       trackThemes,
+      trackCollections,
+      trackDiscounts,
+      trackAppPermissions,
+      trackDomains,
       lowStockThreshold,
       instantAlerts,
     });
@@ -201,10 +209,40 @@ export default function Settings() {
             </div>
           )}
           <Toggle
+            name="trackCollections"
+            label="Collection changes"
+            description="Track when collections are created, updated, or deleted"
+            defaultChecked={settings.trackCollections}
+          />
+          <Toggle
+            name="trackDiscounts"
+            label="Discount changes"
+            description="Track when discounts are created, modified, or deleted"
+            defaultChecked={settings.trackDiscounts}
+            disabled={settings.plan !== "pro"}
+            proOnly
+          />
+          <Toggle
             name="trackThemes"
             label="Theme publishes"
             description="Track when a new theme becomes your live theme"
             defaultChecked={settings.trackThemes}
+            disabled={settings.plan !== "pro"}
+            proOnly
+          />
+          <Toggle
+            name="trackAppPermissions"
+            label="App permission changes"
+            description="Track when installed apps expand or change their permissions"
+            defaultChecked={settings.trackAppPermissions}
+            disabled={settings.plan !== "pro"}
+            proOnly
+          />
+          <Toggle
+            name="trackDomains"
+            label="Domain changes"
+            description="Track when domains are added, changed, or removed"
+            defaultChecked={settings.trackDomains}
             disabled={settings.plan !== "pro"}
             proOnly
           />

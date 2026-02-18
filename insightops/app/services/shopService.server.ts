@@ -7,6 +7,10 @@ export interface ShopSettings {
   trackVisibility: boolean;
   trackInventory: boolean;
   trackThemes: boolean;
+  trackCollections: boolean;
+  trackDiscounts: boolean;
+  trackAppPermissions: boolean;
+  trackDomains: boolean;
   lowStockThreshold: number;
   instantAlerts: boolean;
 }
@@ -27,6 +31,8 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
       trackVisibility: true,
       trackInventory: true,
       trackThemes: false, // Pro only by default
+      trackCollections: true,
+      trackDiscounts: false, // Pro only
       installedAt: new Date(),
     },
     update: {
@@ -44,6 +50,10 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackCollections: shop.trackCollections,
+    trackDiscounts: shop.trackDiscounts,
+    trackAppPermissions: shop.trackAppPermissions,
+    trackDomains: shop.trackDomains,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -67,6 +77,10 @@ export async function getShopSettings(shopDomain: string): Promise<ShopSettings 
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackCollections: shop.trackCollections,
+    trackDiscounts: shop.trackDiscounts,
+    trackAppPermissions: shop.trackAppPermissions,
+    trackDomains: shop.trackDomains,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -95,6 +109,27 @@ export async function updateShopSettings(
     trackThemes = false;
   }
 
+  // Discounts are Pro-only
+  let trackDiscounts = settings.trackDiscounts ?? shop.trackDiscounts;
+  if (shop.plan !== "pro" && trackDiscounts) {
+    console.log(`[StoreGuard] Blocking trackDiscounts for free plan: ${shopDomain}`);
+    trackDiscounts = false;
+  }
+
+  // App permissions are Pro-only
+  let trackAppPermissions = settings.trackAppPermissions ?? shop.trackAppPermissions;
+  if (shop.plan !== "pro" && trackAppPermissions) {
+    console.log(`[StoreGuard] Blocking trackAppPermissions for free plan: ${shopDomain}`);
+    trackAppPermissions = false;
+  }
+
+  // Domains are Pro-only
+  let trackDomains = settings.trackDomains ?? shop.trackDomains;
+  if (shop.plan !== "pro" && trackDomains) {
+    console.log(`[StoreGuard] Blocking trackDomains for free plan: ${shopDomain}`);
+    trackDomains = false;
+  }
+
   // Instant alerts are Pro-only
   let instantAlerts = settings.instantAlerts ?? shop.instantAlerts;
   if (shop.plan !== "pro" && instantAlerts) {
@@ -115,6 +150,10 @@ export async function updateShopSettings(
       trackVisibility: settings.trackVisibility ?? shop.trackVisibility,
       trackInventory: settings.trackInventory ?? shop.trackInventory,
       trackThemes,
+      trackCollections: settings.trackCollections ?? shop.trackCollections,
+      trackDiscounts,
+      trackAppPermissions,
+      trackDomains,
       lowStockThreshold,
       instantAlerts,
     },
@@ -129,6 +168,10 @@ export async function updateShopSettings(
     trackVisibility: updated.trackVisibility,
     trackInventory: updated.trackInventory,
     trackThemes: updated.trackThemes,
+    trackCollections: updated.trackCollections,
+    trackDiscounts: updated.trackDiscounts,
+    trackAppPermissions: updated.trackAppPermissions,
+    trackDomains: updated.trackDomains,
     lowStockThreshold: updated.lowStockThreshold,
     instantAlerts: updated.instantAlerts,
   };
@@ -173,6 +216,9 @@ export async function downgradeShopToFree(shopDomain: string): Promise<void> {
     data: {
       plan: "free",
       trackThemes: false, // Disable Pro-only features
+      trackDiscounts: false, // Disable Pro-only features
+      trackAppPermissions: false, // Disable Pro-only features
+      trackDomains: false, // Disable Pro-only features
       instantAlerts: false, // Disable Pro-only features
     },
   });
@@ -195,7 +241,7 @@ export async function isProPlan(shopDomain: string): Promise<boolean> {
  */
 export async function canTrackFeature(
   shopDomain: string,
-  feature: "prices" | "visibility" | "inventory" | "themes"
+  feature: "prices" | "visibility" | "inventory" | "themes" | "collections" | "discounts" | "app_permissions" | "domains"
 ): Promise<boolean> {
   const shop = await db.shop.findUnique({
     where: { shopifyDomain: shopDomain },
@@ -212,6 +258,14 @@ export async function canTrackFeature(
       return shop.trackInventory;
     case "themes":
       return shop.plan === "pro" && shop.trackThemes;
+    case "collections":
+      return shop.trackCollections;
+    case "discounts":
+      return shop.plan === "pro" && shop.trackDiscounts;
+    case "app_permissions":
+      return shop.plan === "pro" && shop.trackAppPermissions;
+    case "domains":
+      return shop.plan === "pro" && shop.trackDomains;
     default:
       return false;
   }
@@ -254,4 +308,42 @@ export async function getShopAlertEmail(shopDomain: string): Promise<string | nu
   });
 
   return shop?.alertEmail ?? null;
+}
+
+/**
+ * Check if a shop has completed onboarding.
+ */
+export async function isOnboarded(shopDomain: string): Promise<boolean> {
+  const shop = await db.shop.findUnique({
+    where: { shopifyDomain: shopDomain },
+    select: { onboardedAt: true },
+  });
+  return shop?.onboardedAt !== null && shop?.onboardedAt !== undefined;
+}
+
+/**
+ * Mark a shop as onboarded and save initial settings from the onboarding flow.
+ */
+export async function completeOnboarding(
+  shopDomain: string,
+  settings: {
+    alertEmail: string | null;
+    trackPrices: boolean;
+    trackVisibility: boolean;
+    trackInventory: boolean;
+    trackCollections: boolean;
+  }
+): Promise<void> {
+  await db.shop.update({
+    where: { shopifyDomain: shopDomain },
+    data: {
+      alertEmail: settings.alertEmail,
+      trackPrices: settings.trackPrices,
+      trackVisibility: settings.trackVisibility,
+      trackInventory: settings.trackInventory,
+      trackCollections: settings.trackCollections,
+      onboardedAt: new Date(),
+    },
+  });
+  console.log(`[StoreGuard] Onboarding completed for ${shopDomain}`);
 }

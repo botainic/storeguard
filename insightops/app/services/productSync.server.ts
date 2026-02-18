@@ -99,6 +99,12 @@ export const VARIANTS_PER_PAGE = 100;
 const THROTTLE_THRESHOLD = 200;
 
 /**
+ * Maximum number of consecutive throttle retries before aborting.
+ * Prevents infinite loops under persistent rate limiting.
+ */
+export const MAX_THROTTLE_RETRIES = 10;
+
+/**
  * Wait for Shopify's rate limit bucket to refill enough for the next query.
  * Returns immediately if sufficient budget is available.
  */
@@ -208,8 +214,8 @@ export async function getSyncStatus(shop: string): Promise<{
   if (!syncRecord) {
     // Legacy installs may have ProductCache entries from webhooks without ever creating baseline snapshots.
     // Baselines are what make the *first* product update show a diff.
-    const baselineCount = await db.eventLog.count({
-      where: { shop, topic: "products/snapshot" },
+    const baselineCount = await db.changeEvent.count({
+      where: { shop, eventType: "product_snapshot" },
     });
 
     if (baselineCount > 0) {
@@ -252,6 +258,7 @@ async function fetchAllVariants(
   // Paginate remaining variants
   let variantCursor = product.variants.pageInfo.endCursor;
   let hasMore = true;
+  let variantThrottleRetries = 0;
 
   while (hasMore) {
     const response = await admin.graphql(
@@ -285,10 +292,20 @@ async function fetchAllVariants(
     // Handle throttling on variant fetches
     const retryMs = getThrottleRetryMs(data);
     if (retryMs > 0) {
-      console.log(`[StoreGuard] Throttled on variant fetch, waiting ${retryMs}ms`);
+      variantThrottleRetries++;
+      if (variantThrottleRetries >= MAX_THROTTLE_RETRIES) {
+        console.warn(
+          `[StoreGuard] Variant fetch for product ${product.id} hit max throttle retries (${MAX_THROTTLE_RETRIES}), returning partial variants`
+        );
+        break;
+      }
+      console.log(`[StoreGuard] Throttled on variant fetch (attempt ${variantThrottleRetries}/${MAX_THROTTLE_RETRIES}), waiting ${retryMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, retryMs));
       continue; // Retry the same cursor
     }
+
+    // Reset counter on successful request
+    variantThrottleRetries = 0;
 
     const variantPage = data.data?.product?.variants;
     if (!variantPage) break;
@@ -341,6 +358,8 @@ export async function syncProducts(
     create: { shop, status: "syncing", startedAt: new Date() },
     update: { status: "syncing", startedAt: new Date(), error: null },
   });
+
+  let throttleRetries = 0;
 
   try {
     while (hasNextPage) {
@@ -403,10 +422,20 @@ export async function syncProducts(
       // Handle THROTTLED errors — wait and retry the same cursor
       const retryMs = getThrottleRetryMs(data);
       if (retryMs > 0) {
-        console.log(`[StoreGuard] Throttled by Shopify, waiting ${retryMs}ms before retry...`);
+        throttleRetries++;
+        if (throttleRetries >= MAX_THROTTLE_RETRIES) {
+          console.warn(
+            `[StoreGuard] Product sync hit max throttle retries (${MAX_THROTTLE_RETRIES}) for ${shop}, returning partial result (${synced} products synced)`
+          );
+          break;
+        }
+        console.log(`[StoreGuard] Throttled by Shopify (attempt ${throttleRetries}/${MAX_THROTTLE_RETRIES}), waiting ${retryMs}ms before retry...`);
         await new Promise((resolve) => setTimeout(resolve, retryMs));
         continue; // Retry with the same cursor
       }
+
+      // Reset counter on successful request
+      throttleRetries = 0;
 
       const products = data.data?.products;
 
@@ -421,7 +450,7 @@ export async function syncProducts(
         data.extensions?.cost?.actualQueryCost ?? 50
       );
 
-      // Upsert products into cache and create baseline EventLog entries
+      // Upsert products into cache and create baseline ChangeEvent entries
       for (const edge of products.edges) {
         const product = edge.node;
         // Extract numeric ID from GID (gid://shopify/Product/123)
@@ -457,20 +486,44 @@ export async function syncProducts(
           inventoryQuantity: v.inventoryQuantity ?? 0,
         }));
 
-        await db.productSnapshot.upsert({
-          where: { shop_id: { shop, id: numericId } },
-          create: {
-            id: numericId,
-            shop,
-            title: product.title,
-            status: product.status.toLowerCase(),
-            variants: JSON.stringify(productSnapshotVariants),
-          },
-          update: {
-            title: product.title,
-            status: product.status.toLowerCase(),
-            variants: JSON.stringify(productSnapshotVariants),
-          },
+        await db.$transaction(async (tx) => {
+          await tx.productSnapshot.upsert({
+            where: { shop_id: { shop, id: numericId } },
+            create: {
+              id: numericId,
+              shop,
+              title: product.title,
+              status: product.status.toLowerCase(),
+            },
+            update: {
+              title: product.title,
+              status: product.status.toLowerCase(),
+            },
+          });
+
+          for (const v of productSnapshotVariants) {
+            await tx.variantSnapshot.upsert({
+              where: {
+                productSnapshotId_shopifyVariantId: {
+                  productSnapshotId: numericId,
+                  shopifyVariantId: String(v.id),
+                },
+              },
+              create: {
+                productSnapshotId: numericId,
+                shop,
+                shopifyVariantId: String(v.id),
+                title: v.title,
+                price: String(v.price),
+                inventoryQuantity: v.inventoryQuantity,
+              },
+              update: {
+                title: v.title,
+                price: String(v.price),
+                inventoryQuantity: v.inventoryQuantity,
+              },
+            });
+          }
         });
 
         // Build a synthetic ProductNode with all variants for snapshot creation
@@ -482,11 +535,11 @@ export async function syncProducts(
           },
         };
 
-        // Ensure we have a baseline snapshot for this product (legacy EventLog).
+        // Ensure we have a baseline snapshot for this product.
         // IMPORTANT: ProductCache can exist from webhooks, but that doesn't mean a baseline snapshot exists.
-        // Only `products/snapshot` events count as baselines.
-        const existingBaseline = await db.eventLog.findFirst({
-          where: { shop, shopifyId: numericId, topic: "products/snapshot" },
+        // Only `product_snapshot` events count as baselines.
+        const existingBaseline = await db.changeEvent.findFirst({
+          where: { shop, entityId: numericId, eventType: "product_snapshot" },
         });
 
         if (!existingBaseline || force) {
@@ -497,31 +550,37 @@ export async function syncProducts(
             changes: [], // No changes for baseline
           });
 
-          // Don't spam multiple baselines unless explicitly forced; even on force, keep it idempotent by upserting a single baseline.
-          // Prisma doesn't support "upsert" without a unique key, so we just create a new baseline when forcing.
-          // (For normal runs, we only create if missing.)
+          // Don't spam multiple baselines unless explicitly forced; even on force, keep it idempotent.
           if (!existingBaseline) {
-            await db.eventLog.create({
+            await db.changeEvent.create({
               data: {
                 shop,
-                shopifyId: numericId,
+                entityType: "product",
+                entityId: numericId,
+                eventType: "product_snapshot",
+                resourceName: product.title,
+                source: "sync_job",
+                importance: "low",
                 topic: "products/snapshot",
                 author: "StoreGuard",
-                message: `Baseline snapshot for "${product.title}"`,
                 diff,
-                webhookId: null,
+                webhookId: `baseline-${numericId}-${Date.now()}`,
               },
             });
           } else if (force) {
-            await db.eventLog.create({
+            await db.changeEvent.create({
               data: {
                 shop,
-                shopifyId: numericId,
+                entityType: "product",
+                entityId: numericId,
+                eventType: "product_snapshot",
+                resourceName: product.title,
+                source: "sync_job",
+                importance: "low",
                 topic: "products/snapshot",
                 author: "StoreGuard",
-                message: `Refreshed baseline snapshot for "${product.title}"`,
                 diff,
-                webhookId: null,
+                webhookId: `baseline-${numericId}-${Date.now()}`,
               },
             });
           }
@@ -588,7 +647,7 @@ export async function needsProductSync(shop: string): Promise<boolean> {
   const syncRecord = await db.shopSync.findUnique({ where: { shop } });
   const snapshotCount = await db.productSnapshot.count({ where: { shop } });
   const cacheCount = await db.productCache.count({ where: { shop } });
-  const baselineCount = await db.eventLog.count({ where: { shop, topic: "products/snapshot" } });
+  const baselineCount = await db.changeEvent.count({ where: { shop, eventType: "product_snapshot" } });
   const expectedCount = Math.max(syncRecord?.syncedProducts ?? 0, cacheCount, baselineCount);
 
   if (syncRecord) {

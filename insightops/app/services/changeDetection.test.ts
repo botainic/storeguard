@@ -6,6 +6,7 @@ import {
   shouldAlertInventoryZero,
   shouldAlertLowStock,
   formatVariantLabel,
+  isCriticalInstantAlert,
 } from "./changeDetection.utils";
 
 describe("calculatePriceImportance", () => {
@@ -153,5 +154,87 @@ describe("formatVariantLabel", () => {
 
   it("should return product title for null variant title", () => {
     expect(formatVariantLabel("Widget", null)).toBe("Widget");
+  });
+});
+
+describe("isCriticalInstantAlert", () => {
+  // Price changes: only high importance (>50% drop) triggers instant alert
+  it("should return true for high-importance price changes (>50% drop)", () => {
+    expect(isCriticalInstantAlert({ eventType: "price_change", importance: "high" })).toBe(true);
+  });
+
+  it("should return false for medium-importance price changes", () => {
+    expect(isCriticalInstantAlert({ eventType: "price_change", importance: "medium" })).toBe(false);
+  });
+
+  it("should return false for low-importance price changes", () => {
+    expect(isCriticalInstantAlert({ eventType: "price_change", importance: "low" })).toBe(false);
+  });
+
+  // Inventory zero: always critical
+  it("should return true for inventory_zero events", () => {
+    expect(isCriticalInstantAlert({ eventType: "inventory_zero", importance: "high" })).toBe(true);
+  });
+
+  // Visibility: only when product becomes hidden
+  it("should return true when product is hidden (active -> draft)", () => {
+    expect(isCriticalInstantAlert({
+      eventType: "visibility_change",
+      importance: "high",
+      afterValue: "draft",
+    })).toBe(true);
+  });
+
+  it("should return true when product is archived (active -> archived)", () => {
+    expect(isCriticalInstantAlert({
+      eventType: "visibility_change",
+      importance: "high",
+      afterValue: "archived",
+    })).toBe(true);
+  });
+
+  it("should return false when product becomes visible (draft -> active)", () => {
+    expect(isCriticalInstantAlert({
+      eventType: "visibility_change",
+      importance: "medium",
+      afterValue: "active",
+    })).toBe(false);
+  });
+
+  // Domain removed: always critical
+  it("should return true for domain_removed events", () => {
+    expect(isCriticalInstantAlert({ eventType: "domain_removed", importance: "high" })).toBe(true);
+  });
+
+  // App permissions expanded: only high importance (scopes added)
+  it("should return true for high-importance app_permissions_changed (scopes expanded)", () => {
+    expect(isCriticalInstantAlert({ eventType: "app_permissions_changed", importance: "high" })).toBe(true);
+  });
+
+  it("should return false for medium-importance app_permissions_changed (scopes removed only)", () => {
+    expect(isCriticalInstantAlert({ eventType: "app_permissions_changed", importance: "medium" })).toBe(false);
+  });
+
+  // Non-critical event types should never trigger
+  it("should return false for inventory_low events", () => {
+    expect(isCriticalInstantAlert({ eventType: "inventory_low", importance: "medium" })).toBe(false);
+  });
+
+  it("should return false for theme_publish events", () => {
+    expect(isCriticalInstantAlert({ eventType: "theme_publish", importance: "high" })).toBe(false);
+  });
+
+  it("should return false for collection events", () => {
+    expect(isCriticalInstantAlert({ eventType: "collection_created", importance: "low" })).toBe(false);
+    expect(isCriticalInstantAlert({ eventType: "collection_deleted", importance: "high" })).toBe(false);
+  });
+
+  it("should return false for discount events", () => {
+    expect(isCriticalInstantAlert({ eventType: "discount_created", importance: "medium" })).toBe(false);
+    expect(isCriticalInstantAlert({ eventType: "discount_deleted", importance: "high" })).toBe(false);
+  });
+
+  it("should return false for domain_changed events", () => {
+    expect(isCriticalInstantAlert({ eventType: "domain_changed", importance: "high" })).toBe(false);
   });
 });

@@ -28,13 +28,7 @@ export interface DigestSummary {
   periodEnd: Date;
   totalChanges: number;
   highPriorityCount: number;
-  eventsByType: {
-    price_change: DigestEvent[];
-    visibility_change: DigestEvent[];
-    inventory_low: DigestEvent[];
-    inventory_zero: DigestEvent[];
-    theme_publish: DigestEvent[];
-  };
+  eventsByType: Record<string, DigestEvent[]>;
 }
 
 /**
@@ -110,14 +104,8 @@ export async function generateDigestForShop(shopDomain: string): Promise<DigestS
     return null;
   }
 
-  // Group events by type
-  const eventsByType = {
-    price_change: [] as DigestEvent[],
-    visibility_change: [] as DigestEvent[],
-    inventory_low: [] as DigestEvent[],
-    inventory_zero: [] as DigestEvent[],
-    theme_publish: [] as DigestEvent[],
-  };
+  // Group events by type dynamically
+  const eventsByType: Record<string, DigestEvent[]> = {};
 
   let highPriorityCount = 0;
 
@@ -139,11 +127,10 @@ export async function generateDigestForShop(shopDomain: string): Promise<DigestS
       highPriorityCount++;
     }
 
-    // Add to appropriate category
-    const eventType = event.eventType as keyof typeof eventsByType;
-    if (eventsByType[eventType]) {
-      eventsByType[eventType].push(digestEvent);
+    if (!eventsByType[event.eventType]) {
+      eventsByType[event.eventType] = [];
     }
+    eventsByType[event.eventType].push(digestEvent);
   }
 
   // Build summary
@@ -181,14 +168,10 @@ export async function markEventsAsDigested(eventIds: string[]): Promise<void> {
  * Get all event IDs from a digest summary
  */
 export function getEventIdsFromDigest(digest: DigestSummary): string[] {
-  const allEvents = [
-    ...digest.eventsByType.price_change,
-    ...digest.eventsByType.visibility_change,
-    ...digest.eventsByType.inventory_low,
-    ...digest.eventsByType.inventory_zero,
-    ...digest.eventsByType.theme_publish,
-  ];
-
+  const allEvents: DigestEvent[] = [];
+  for (const events of Object.values(digest.eventsByType)) {
+    allEvents.push(...events);
+  }
   return allEvents.map((e) => e.id);
 }
 
@@ -207,8 +190,26 @@ export function formatEventType(eventType: string): string {
       return "Out of Stock";
     case "theme_publish":
       return "Theme Published";
+    case "collection_created":
+      return "Collection Created";
+    case "collection_updated":
+      return "Collection Updated";
+    case "collection_deleted":
+      return "Collection Deleted";
+    case "discount_created":
+      return "Discount Created";
+    case "discount_changed":
+      return "Discount Changed";
+    case "discount_deleted":
+      return "Discount Deleted";
+    case "app_permissions_changed":
+      return "App Permissions Changed";
+    case "domain_changed":
+      return "Domain Changed";
+    case "domain_removed":
+      return "Domain Removed";
     default:
-      return eventType;
+      return eventType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }
 }
 
@@ -233,7 +234,25 @@ export function formatEventForEmail(event: DigestEvent): string {
       return `${event.resourceName}: now out of stock (was ${event.beforeValue} units) (${time})`;
     case "theme_publish":
       return `"${event.resourceName}" is now your live theme (${time})`;
+    case "collection_created":
+      return `Collection "${event.resourceName}" was created (${time})`;
+    case "collection_updated":
+      return `Collection "${event.resourceName}" was updated (${time})`;
+    case "collection_deleted":
+      return `Collection "${event.resourceName}" was deleted (${time})`;
+    case "discount_created":
+      return `Discount "${event.resourceName}" was created (${time})`;
+    case "discount_changed":
+      return `Discount "${event.resourceName}" was modified: ${event.beforeValue ?? ""} → ${event.afterValue ?? ""} (${time})`;
+    case "discount_deleted":
+      return `Discount "${event.resourceName}" was deleted (${time})`;
+    case "app_permissions_changed":
+      return `App permissions changed: ${event.resourceName} (${time})`;
+    case "domain_changed":
+      return `Domain "${event.resourceName}" was added or changed (${time})`;
+    case "domain_removed":
+      return `Domain "${event.resourceName}" was removed (${time})`;
     default:
-      return `${event.resourceName}: ${event.beforeValue} → ${event.afterValue} (${time})`;
+      return `${event.resourceName}: ${event.beforeValue ?? ""} → ${event.afterValue ?? ""} (${time})`;
   }
 }

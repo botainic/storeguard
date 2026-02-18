@@ -12,7 +12,21 @@ import {
   detectLowStock,
   deleteProductSnapshot,
   recordThemePublish,
+  recordCollectionCreated,
+  recordCollectionUpdated,
+  recordCollectionDeleted,
+  recordDiscountCreated,
+  recordDiscountUpdated,
+  recordDiscountDeleted,
+  recordAppPermissionsChanged,
+  recordDomainChanged,
+  recordDomainRemoved,
 } from "./changeDetection.server";
+import {
+  aggregateInventoryLevels,
+  type InventoryLevelNode,
+} from "./changeDetection.utils";
+import { normalizeTopic } from "./jobProcessor.utils";
 
 // Full product payload from Shopify webhook
 interface ProductPayload {
@@ -67,6 +81,23 @@ interface CollectionPayload {
     alt: string | null;
     position: number;
   } | null;
+}
+
+interface DiscountPayload {
+  id: number;
+  title: string;
+  value: string;
+  value_type: string; // "percentage" | "fixed_amount"
+  code?: string;
+  starts_at: string | null;
+  ends_at: string | null;
+}
+
+interface DomainPayload {
+  id: number;
+  host: string;
+  ssl_enabled?: boolean;
+  localization?: { country: string | null; default_locale: string };
 }
 
 interface InventoryLevelPayload {
@@ -322,20 +353,19 @@ async function processProductUpdate(
     }
   }
 
-  // === Legacy EventLog (for activity timeline) ===
   // Create new snapshot
   const newSnapshot = createProductSnapshot(payload);
 
   // Get previous snapshot for diff comparison
   // Look for any event with a snapshot (baseline or previous update)
   let oldSnapshot: ProductSnapshot | null = null;
-  const previousEvents = await db.eventLog.findMany({
+  const previousEvents = await db.changeEvent.findMany({
     where: {
       shop,
-      shopifyId: String(payload.id),
+      entityId: String(payload.id),
       diff: { not: null },
     },
-    orderBy: { timestamp: "desc" },
+    orderBy: { detectedAt: "desc" },
     take: 5, // Check recent events for a valid snapshot
   });
 
@@ -382,16 +412,20 @@ async function processProductUpdate(
     update: { title: payload.title },
   });
 
-  // Create event log
-  await db.eventLog.create({
+  // Create activity log entry
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: String(payload.id),
+      entityType: "product",
+      entityId: String(payload.id),
+      eventType: "product_updated",
+      resourceName: payload.title,
+      source: "webhook",
+      importance: "low",
       topic: "products/update",
       author,
-      message,
       diff,
-      webhookId,
+      webhookId: webhookId ?? `activity-products-update-${payload.id}-${Date.now()}`,
     },
   });
 
@@ -438,15 +472,19 @@ async function processProductCreate(
     update: { title: payload.title },
   });
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: String(payload.id),
+      entityType: "product",
+      entityId: String(payload.id),
+      eventType: "product_created",
+      resourceName: payload.title,
+      source: "webhook",
+      importance: "low",
       topic: "products/create",
       author,
-      message,
       diff,
-      webhookId,
+      webhookId: webhookId ?? `activity-products-create-${payload.id}-${Date.now()}`,
     },
   });
 
@@ -479,28 +517,33 @@ async function processProductDelete(
   // === StoreGuard: Clean up snapshot for deleted product ===
   await deleteProductSnapshot(shop, productId);
 
-  // Fallback to previous events
+  // Fallback to previous ChangeEvent records
   if (!productTitle) {
-    const previousEvent = await db.eventLog.findFirst({
-      where: { shop, shopifyId: productId },
-      orderBy: { timestamp: "desc" },
+    const previousEvent = await db.changeEvent.findFirst({
+      where: { shop, entityId: productId },
+      orderBy: { detectedAt: "desc" },
     });
-    const match = previousEvent?.message?.match(/"([^"]+)"/);
-    if (match) productTitle = match[1];
+    if (previousEvent) {
+      productTitle = previousEvent.resourceName;
+    }
   }
 
   const displayName = productTitle || `Product #${payload.id}`;
   const message = `Product deleted: "${displayName}"`;
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
-      shopifyId: productId,
+      entityType: "product",
+      entityId: productId,
+      eventType: "product_deleted",
+      resourceName: displayName,
+      source: "webhook",
+      importance: "low",
       topic: "products/delete",
       author: "System/App",
-      message,
       diff: null,
-      webhookId,
+      webhookId: webhookId ?? `activity-products-delete-${payload.id}-${Date.now()}`,
     },
   });
 
@@ -520,61 +563,229 @@ async function processCollection(
   const verb = topic.includes("create") ? "create" : topic.includes("update") ? "update" : "delete";
 
   if (verb === "delete") {
-    // For deletes, try to get title from previous events
+    // For deletes, try to get title from previous events or ChangeEvents
     const collectionId = String((payload as { id: number }).id);
     let title: string | null = null;
 
-    const previousEvent = await db.eventLog.findFirst({
-      where: { shop, shopifyId: collectionId, topic: { contains: "collections" } },
-      orderBy: { timestamp: "desc" },
+    // Try ChangeEvent first for title lookup
+    const previousChange = await db.changeEvent.findFirst({
+      where: { shop, entityType: "collection", entityId: collectionId },
+      orderBy: { detectedAt: "desc" },
     });
-    const match = previousEvent?.message?.match(/"([^"]+)"/);
-    if (match) title = match[1];
+    if (previousChange) {
+      title = previousChange.resourceName;
+    }
 
     const displayName = title || `Collection #${collectionId}`;
-    const message = `Collection deleted: "${displayName}"`;
 
-    await db.eventLog.create({
-      data: {
-        shop,
-        shopifyId: collectionId,
-        topic,
-        author: "System/App",
-        message,
-        diff: null,
-        webhookId,
-      },
-    });
+    // === StoreGuard ChangeEvent ===
+    if (webhookId) {
+      await recordCollectionDeleted(shop, collectionId, displayName, webhookId);
+    }
 
-    console.log(`[StoreGuard] Logged: ${message}`);
+    console.log(`[StoreGuard] Collection deleted: "${displayName}"`);
     return;
   }
 
   const collection = payload as CollectionPayload;
   const author = (await fetchAuthor(shop, accessToken, "Collection", collection.id, verb)) || "System/App";
-  const message = `${author} ${verb}d collection "${collection.title}"`;
 
-  await db.eventLog.create({
-    data: {
-      shop,
-      shopifyId: String(collection.id),
-      topic,
-      author,
-      message,
-      diff: JSON.stringify({ title: collection.title, handle: collection.handle }),
-      webhookId,
-    },
-  });
+  // === StoreGuard ChangeEvent ===
+  if (webhookId) {
+    if (verb === "create") {
+      await recordCollectionCreated(shop, String(collection.id), collection.title, webhookId);
+    } else {
+      await recordCollectionUpdated(shop, String(collection.id), collection.title, webhookId);
+    }
+  }
 
-  console.log(`[StoreGuard] Logged: ${message}`);
+  console.log(`[StoreGuard] Collection ${verb}d: "${collection.title}"`);
+}
+
+/**
+ * Process a discount job
+ */
+async function processDiscount(
+  shop: string,
+  topic: string,
+  payload: DiscountPayload | { id: number },
+  webhookId: string | null
+): Promise<void> {
+  const verb = topic.includes("create") ? "create" : topic.includes("update") ? "update" : "delete";
+
+  if (verb === "delete") {
+    const discountId = String((payload as { id: number }).id);
+
+    // Try to find a title from previous ChangeEvents
+    let title: string | null = null;
+    const previousChange = await db.changeEvent.findFirst({
+      where: { shop, entityType: "discount", entityId: discountId },
+      orderBy: { detectedAt: "desc" },
+    });
+    if (previousChange) {
+      title = previousChange.resourceName;
+    }
+
+    const displayName = title || `Discount #${discountId}`;
+
+    if (webhookId) {
+      await recordDiscountDeleted(shop, discountId, displayName, webhookId);
+    }
+
+    console.log(`[StoreGuard] Discount deleted: "${displayName}"`);
+    return;
+  }
+
+  const discount = payload as DiscountPayload;
+  const discountTitle = discount.title || discount.code || `Discount #${discount.id}`;
+  const discountValue = discount.value_type === "percentage" ? discount.value : null;
+
+  if (webhookId) {
+    if (verb === "create") {
+      await recordDiscountCreated(shop, String(discount.id), discountTitle, discountValue, webhookId);
+    } else {
+      await recordDiscountUpdated(shop, String(discount.id), discountTitle, discountValue, webhookId);
+    }
+  }
+
+  console.log(`[StoreGuard] Discount ${verb}d: "${discountTitle}"`);
+}
+
+/**
+ * Process a domain job
+ */
+async function processDomain(
+  shop: string,
+  topic: string,
+  payload: DomainPayload | { id: number },
+  webhookId: string | null
+): Promise<void> {
+  const isDestroy = topic.includes("destroy");
+
+  if (isDestroy) {
+    const domainId = String((payload as { id: number }).id);
+
+    // Try to find a host from previous ChangeEvents
+    let host: string | null = null;
+    const previousChange = await db.changeEvent.findFirst({
+      where: { shop, entityType: "domain", entityId: domainId },
+      orderBy: { detectedAt: "desc" },
+    });
+    if (previousChange) {
+      host = previousChange.resourceName;
+    }
+
+    const displayName = host || `Domain #${domainId}`;
+
+    if (webhookId) {
+      await recordDomainRemoved(shop, domainId, displayName, webhookId);
+    }
+
+    console.log(`[StoreGuard] Domain removed: "${displayName}"`);
+    return;
+  }
+
+  const domain = payload as DomainPayload;
+  const domainHost = domain.host || `Domain #${domain.id}`;
+
+  if (webhookId) {
+    await recordDomainChanged(shop, String(domain.id), domainHost, webhookId);
+  }
+
+  console.log(`[StoreGuard] Domain changed: "${domainHost}"`);
+}
+
+/** Shape of the inventoryLevels connection from the GraphQL response */
+interface InventoryLevelsConnection {
+  nodes: InventoryLevelNode[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+}
+
+/**
+ * Fetch total inventory across all locations for an inventory item.
+ * Uses cursor-based pagination to handle merchants with >50 locations.
+ * Returns { totalQuantity, locationName } where totalQuantity is the sum
+ * of available quantities across all locations, and locationName is the
+ * name of the location that triggered this webhook.
+ */
+async function fetchTotalInventory(
+  shop: string,
+  accessToken: string,
+  inventoryItemId: number,
+  triggerLocationId: number
+): Promise<{ totalQuantity: number; locationName: string | null }> {
+  const allNodes: InventoryLevelNode[] = [];
+  let cursor: string | null = null;
+  const MAX_PAGES = 20; // Safety limit to prevent infinite loops
+
+  try {
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const gql = await fetch(`https://${shop}/admin/api/${apiVersion}/graphql.json`, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `#graphql
+            query InventoryLevels($inventoryItemId: ID!, $cursor: String) {
+              inventoryItem(id: $inventoryItemId) {
+                inventoryLevels(first: 50, after: $cursor) {
+                  nodes {
+                    quantities(names: ["available"]) {
+                      quantity
+                    }
+                    location {
+                      id
+                      name
+                    }
+                  }
+                  pageInfo {
+                    hasNextPage
+                    endCursor
+                  }
+                }
+              }
+            }`,
+          variables: {
+            inventoryItemId: `gid://shopify/InventoryItem/${inventoryItemId}`,
+            cursor,
+          },
+        }),
+      });
+
+      const data = (await gql.json()) as {
+        data?: { inventoryItem?: { inventoryLevels?: InventoryLevelsConnection } };
+      };
+      const connection = data?.data?.inventoryItem?.inventoryLevels;
+      if (!connection?.nodes || connection.nodes.length === 0) {
+        break;
+      }
+
+      allNodes.push(...connection.nodes);
+
+      if (!connection.pageInfo.hasNextPage || !connection.pageInfo.endCursor) {
+        break;
+      }
+      cursor = connection.pageInfo.endCursor;
+    }
+
+    if (allNodes.length === 0) {
+      return { totalQuantity: 0, locationName: null };
+    }
+
+    return aggregateInventoryLevels(allNodes, triggerLocationId);
+  } catch (error) {
+    console.error(`[StoreGuard] Failed to fetch total inventory:`, error);
+    return { totalQuantity: 0, locationName: null };
+  }
 }
 
 /**
  * Process an inventory update job
  *
- * NOTE: Once the orders/paid webhook is enabled (requires Protected Customer Data approval),
- * the noise filter below will automatically hide inventory updates caused by orders.
- * Until then, we keep logging inventory updates so the app isn't blind to sales activity.
+ * Multi-location aware: aggregates inventory across all locations before alerting.
+ * The webhook fires per-location, so we query Shopify for the total across all locations.
  */
 async function processInventoryUpdate(
   shop: string,
@@ -643,142 +854,124 @@ async function processInventoryUpdate(
     return;
   }
 
-  // NOISE FILTER: Skip inventory updates caused by orders
-  // When orders webhook is enabled, this will hide the "symptom" when we already have the "cause"
-  if (productId) {
-    try {
-      const recentOrder = await db.eventLog.findFirst({
-        where: {
-          shop,
-          topic: "ORDERS_CREATE",
-          timestamp: {
-            gte: new Date(Date.now() - 30 * 1000), // Within last 30 seconds
-          },
-        },
-        orderBy: { timestamp: "desc" },
-      });
+  // === Multi-location: Fetch total inventory across all locations ===
+  const { totalQuantity, locationName } = await fetchTotalInventory(
+    shop,
+    accessToken,
+    payload.inventory_item_id,
+    payload.location_id
+  );
 
-      if (recentOrder?.diff) {
-        const orderDiff = JSON.parse(recentOrder.diff);
-        const orderProductIds = orderDiff.items?.map((item: { productId: number }) => String(item.productId)) || [];
-        if (orderProductIds.includes(productId)) {
-          console.log(`[StoreGuard] Skipping inventory update - caused by recent order ${orderDiff.orderName}`);
-          return;
-        }
-      }
-    } catch (filterError) {
-      console.error(`[StoreGuard] Noise filter check failed:`, filterError);
-    }
-  }
-
-  // Get previous inventory level for diff display AND for >0→0 detection
-  // Strategy: Check EventLog first (most recent), then fall back to ProductSnapshot
+  // Get previous TOTAL inventory for diff display AND for >0→0 detection
+  // Strategy: Check ChangeEvent first (most recent), then fall back to ProductSnapshot
   let oldAvailable: number | null = null;
   try {
-    // First, try EventLog (recent inventory updates)
-    const previousEvent = await db.eventLog.findFirst({
+    // First, try ChangeEvent (recent inventory updates) — stores totalQuantity
+    const previousEvent = await db.changeEvent.findFirst({
       where: {
         shop,
-        shopifyId: String(payload.inventory_item_id),
-        topic: "INVENTORY_LEVELS_UPDATE",
+        entityId: String(payload.inventory_item_id),
+        topic: "inventory/levels/update",
       },
-      orderBy: { timestamp: "desc" },
+      orderBy: { detectedAt: "desc" },
     });
 
     if (previousEvent?.diff) {
       const prevDiff = JSON.parse(previousEvent.diff);
-      oldAvailable = prevDiff.available;
+      // Prefer totalQuantity (multi-location) over legacy available (single-location)
+      oldAvailable = prevDiff.totalQuantity ?? prevDiff.available ?? null;
     }
 
-    // If no EventLog, fall back to ProductSnapshot
+    // If no ChangeEvent, fall back to ProductSnapshot
     if (oldAvailable === null && productId && variantId) {
-      const snapshot = await db.productSnapshot.findUnique({
-        where: { shop_id: { shop, id: productId } },
+      const matchingVariant = await db.variantSnapshot.findUnique({
+        where: {
+          productSnapshotId_shopifyVariantId: {
+            productSnapshotId: productId,
+            shopifyVariantId: variantId,
+          },
+        },
       });
-      if (snapshot?.variants) {
-        try {
-          const variants = JSON.parse(snapshot.variants) as Array<{ id: string; inventoryQuantity: number }>;
-          const matchingVariant = variants.find(v => v.id === variantId);
-          if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
-            oldAvailable = matchingVariant.inventoryQuantity;
-            console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from ProductSnapshot for ${productTitle}`);
-          }
-        } catch {
-          // Invalid JSON in snapshot
-        }
+      if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
+        oldAvailable = matchingVariant.inventoryQuantity;
+        console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from VariantSnapshot for ${productTitle}`);
       }
     }
   } catch (prevError) {
     console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
   }
 
-  // === StoreGuard: Detect inventory changes ===
+  // Build location context for alerts
+  const locationContext = locationName ? `Last change at ${locationName}` : null;
+
+  // === StoreGuard: Detect inventory changes using TOTAL quantity ===
   if (productId && webhookId) {
-    // Detect low stock (crossing below threshold)
+    // Detect low stock (crossing below threshold) — uses total across all locations
     const lowStockDetected = await detectLowStock(
       shop,
       String(payload.inventory_item_id),
       productId,
       productTitle,
       variantTitle,
-      payload.available,
+      totalQuantity,
       oldAvailable,
-      webhookId
+      webhookId,
+      locationContext
     );
 
     // Detect inventory hitting zero (only if not already low stock alert)
-    // Rule: Only triggers on >0 → 0 transition
-    if (payload.available === 0 && !lowStockDetected) {
+    // Rule: Only triggers on >0 → 0 transition — uses total across all locations
+    if (totalQuantity === 0 && !lowStockDetected) {
       await detectInventoryZero(
         shop,
         String(payload.inventory_item_id),
         productId,
         productTitle,
         variantTitle,
-        payload.available,
+        totalQuantity,
         oldAvailable,
-        webhookId
+        webhookId,
+        locationContext
       );
     }
   }
 
-  // Update or create ProductSnapshot with inventory (keeps snapshot current for future comparisons)
+  // Update or create ProductSnapshot with TOTAL inventory (keeps snapshot current for future comparisons)
   if (productId && variantId) {
     try {
-      const snapshot = await db.productSnapshot.findUnique({
+      // Ensure ProductSnapshot exists
+      await db.productSnapshot.upsert({
         where: { shop_id: { shop, id: productId } },
+        create: {
+          id: productId,
+          shop,
+          title: productTitle,
+          status: "active",
+        },
+        update: {},
       });
-      if (snapshot?.variants) {
-        // Update existing snapshot
-        const variants = JSON.parse(snapshot.variants) as Array<{ id: string; title: string; price: string; inventoryQuantity: number }>;
-        const variantIndex = variants.findIndex(v => v.id === variantId);
-        if (variantIndex >= 0) {
-          variants[variantIndex].inventoryQuantity = payload.available;
-          await db.productSnapshot.update({
-            where: { shop_id: { shop, id: productId } },
-            data: { variants: JSON.stringify(variants) },
-          });
-          console.log(`[StoreGuard] Updated ProductSnapshot inventory for ${productTitle}: ${payload.available}`);
-        }
-      } else if (!snapshot) {
-        // No snapshot exists - create a minimal one for future tracking
-        // This ensures the NEXT inventory change can be detected
-        await db.productSnapshot.create({
-          data: {
-            id: productId,
-            shop,
-            title: productTitle,
-            status: "active", // Default assumption
-            variants: JSON.stringify([{
-              id: variantId,
-              title: variantTitle || "Default Title",
-              price: "0.00",
-              inventoryQuantity: payload.available,
-            }]),
+
+      // Upsert the specific variant — atomic, no read-modify-write
+      await db.variantSnapshot.upsert({
+        where: {
+          productSnapshotId_shopifyVariantId: {
+            productSnapshotId: productId,
+            shopifyVariantId: variantId,
           },
-        });
-        console.log(`[StoreGuard] Created ProductSnapshot from inventory webhook for ${productTitle}`);
-      }
+        },
+        create: {
+          productSnapshotId: productId,
+          shop,
+          shopifyVariantId: variantId,
+          title: variantTitle || "Default Title",
+          price: "0.00",
+          inventoryQuantity: totalQuantity,
+        },
+        update: {
+          inventoryQuantity: totalQuantity,
+        },
+      });
+      console.log(`[StoreGuard] Updated VariantSnapshot inventory for ${productTitle}: ${totalQuantity} (total across locations)`);
     } catch (snapshotError) {
       console.error(`[StoreGuard] Failed to update ProductSnapshot inventory:`, snapshotError);
     }
@@ -789,40 +982,49 @@ async function processInventoryUpdate(
       ? `${productTitle} - ${variantTitle}`
       : productTitle;
 
-  // Create a clear message showing stock change
+  // Create a clear message showing stock change (total across all locations)
   let message: string;
-  if (oldAvailable !== null && oldAvailable !== payload.available) {
-    const change = payload.available - oldAvailable;
+  if (oldAvailable !== null && oldAvailable !== totalQuantity) {
+    const change = totalQuantity - oldAvailable;
     const arrow = change > 0 ? "↑" : "↓";
-    message = `Stock ${arrow} "${displayName}" (${oldAvailable} → ${payload.available})`;
+    message = `Stock ${arrow} "${displayName}" (${oldAvailable} → ${totalQuantity} total)`;
   } else {
-    message = `Stock updated: "${displayName}" (${payload.available} units)`;
+    message = `Stock updated: "${displayName}" (${totalQuantity} units total)`;
+  }
+  if (locationName) {
+    message += ` [${locationName}]`;
   }
 
   const diff = JSON.stringify({
     available: payload.available,
+    totalQuantity,
     inventoryChange:
-      oldAvailable !== null && oldAvailable !== payload.available
-        ? { old: oldAvailable, new: payload.available }
+      oldAvailable !== null && oldAvailable !== totalQuantity
+        ? { old: oldAvailable, new: totalQuantity }
         : null,
     locationId: payload.location_id,
+    locationName,
   });
 
-  await db.eventLog.create({
+  await db.changeEvent.create({
     data: {
       shop,
+      entityType: "variant",
       // Use inventory_item_id consistently for inventory events
       // This matches the lookup in getPreviousInventory above
-      shopifyId: String(payload.inventory_item_id),
-      topic: "INVENTORY_LEVELS_UPDATE",
+      entityId: String(payload.inventory_item_id),
+      eventType: "inventory_update",
+      resourceName: displayName,
+      source: "webhook",
+      importance: "low",
+      topic: "inventory/levels/update",
       author: "System/App",
-      message,
       diff,
-      webhookId,
+      webhookId: webhookId ?? `activity-inventory-update-${payload.inventory_item_id}-${Date.now()}`,
     },
   });
 
-  console.log(`[StoreGuard] ✅ Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**
@@ -845,86 +1047,38 @@ async function processThemePublish(
 }
 
 /**
- * Process an order paid job
- */
-async function processOrderPaid(
-  shop: string,
-  payload: {
-    id: number;
-    name: string;
-    total_price: string;
-    subtotal_price: string;
-    currency: string;
-    financial_status: string;
-    line_items: Array<{
-      title: string;
-      quantity: number;
-      price: string;
-      variant_title: string | null;
-      product_id: number | null;
-    }>;
-    discount_codes: Array<{ code: string; amount: string }>;
-  },
-  webhookId: string | null
-): Promise<void> {
-  const itemCount = payload.line_items.reduce((sum, item) => sum + item.quantity, 0);
-  const firstItem = payload.line_items[0]?.title || "items";
-  const itemSummary = itemCount === 1 ? firstItem : `${itemCount} items`;
-
-  const amount = parseFloat(payload.total_price);
-  const formattedAmount = amount.toLocaleString("en-US", {
-    style: "currency",
-    currency: payload.currency || "USD",
-  });
-
-  const message = `Order ${payload.name} - ${formattedAmount}`;
-
-  const diff = JSON.stringify({
-    orderId: payload.id,
-    orderName: payload.name,
-    total: payload.total_price,
-    subtotal: payload.subtotal_price,
-    currency: payload.currency,
-    status: payload.financial_status,
-    itemCount,
-    itemSummary,
-    items: payload.line_items.map((item) => ({
-      title: item.title,
-      variant: item.variant_title,
-      quantity: item.quantity,
-      price: item.price,
-      productId: item.product_id,
-    })),
-    discounts: payload.discount_codes,
-  });
-
-  await db.eventLog.create({
-    data: {
-      shop,
-      shopifyId: String(payload.id),
-      topic: "ORDERS_CREATE",
-      author: "Customer",
-      message,
-      diff,
-      webhookId,
-    },
-  });
-
-  console.log(`[StoreGuard] Logged: ${message}`);
-}
-
-/**
  * Process an app scopes update job
+ * Diffs previous vs current scopes and creates ChangeEvent for permission changes
  */
 async function processScopesUpdate(
   shop: string,
   sessionId: string,
-  payload: { current: string[] }
+  payload: { current: string[] },
+  webhookId: string | null
 ): Promise<void> {
+  // Get the previous scopes from the session before updating
+  const currentSession = await db.session.findUnique({
+    where: { id: sessionId },
+    select: { scope: true },
+  });
+
+  const previousScopes = currentSession?.scope
+    ? currentSession.scope.split(",").map(s => s.trim()).filter(Boolean)
+    : [];
+
+  const currentScopes = payload.current;
+
+  // Update the session with new scopes
   await db.session.update({
     where: { id: sessionId },
-    data: { scope: payload.current.toString() },
+    data: { scope: currentScopes.toString() },
   });
+
+  // === StoreGuard: Create ChangeEvent for permission diff ===
+  if (webhookId) {
+    await recordAppPermissionsChanged(shop, previousScopes, currentScopes, webhookId);
+  }
+
   console.log(`[StoreGuard] Updated scopes for ${shop}`);
 }
 
@@ -951,7 +1105,7 @@ async function processJob(job: {
   const payload = JSON.parse(job.payload);
 
   // Normalize topic format: PRODUCTS_UPDATE -> products/update
-  const normalizedTopic = job.topic.toLowerCase().replace(/_/g, "/");
+  const normalizedTopic = normalizeTopic(job.topic);
 
   switch (normalizedTopic) {
     case "products/update":
@@ -974,11 +1128,18 @@ async function processJob(job: {
     case "themes/publish":
       await processThemePublish(job.shop, payload, job.webhookId);
       break;
-    case "orders/paid":
-      await processOrderPaid(job.shop, payload, job.webhookId);
+    case "discounts/create":
+    case "discounts/update":
+    case "discounts/delete":
+      await processDiscount(job.shop, normalizedTopic, payload, job.webhookId);
+      break;
+    case "domains/create":
+    case "domains/update":
+    case "domains/destroy":
+      await processDomain(job.shop, normalizedTopic, payload, job.webhookId);
       break;
     case "app/scopes/update":
-      await processScopesUpdate(job.shop, session.id, payload);
+      await processScopesUpdate(job.shop, session.id, payload, job.webhookId);
       break;
     default:
       console.log(`[StoreGuard] Unknown topic: ${job.topic} (normalized: ${normalizedTopic})`);

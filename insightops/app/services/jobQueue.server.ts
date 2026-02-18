@@ -44,7 +44,7 @@ export async function queueWebhookJob(data: WebhookJobData): Promise<string | nu
     return job.id;
   } catch (error: unknown) {
     // Handle duplicate webhookId (unique constraint violation)
-    if (error instanceof Error && error.message.includes("Unique constraint")) {
+    if ((error as any)?.code === "P2002") {
       console.log(`[StoreGuard] Duplicate webhook ${data.webhookId}, already queued`);
       return null;
     }

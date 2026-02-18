@@ -41,9 +41,14 @@ model Shop {
   trackVisibility Boolean   @default(true)
   trackInventory  Boolean   @default(true)
   trackThemes     Boolean   @default(false) // Pro only
+  trackCollections Boolean  @default(true) // Collection monitoring (free plan)
+  trackDiscounts  Boolean   @default(false) // Pro only
+  trackAppPermissions Boolean @default(false) // Pro only
+  trackDomains    Boolean   @default(false) // Pro only
   lowStockThreshold Int     @default(5) // Alert when inventory drops below this
   instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
   installedAt     DateTime  @default(now())
+  onboardedAt     DateTime? // When onboarding was completed (null = not onboarded)
   uninstalledAt   DateTime?
   // Stripe billing
   stripeCustomerId     String?  @unique // Stripe customer ID (cus_xxx)
@@ -65,14 +70,20 @@ model ChangeEvent {
   source       String    @default("webhook") // "webhook" | "sync_job" | "manual"
   importance   String    @default("medium") // "high" | "medium" | "low"
   groupId      String?   // For grouping related changes (e.g. bulk edit session)
-  webhookId    String    @unique // Deduplication
+  webhookId    String?   @unique // Deduplication (nullable for activity-only events)
   contextData  String?   // JSON: sales velocity, revenue impact, business context
+  topic        String?   // Webhook topic e.g. "products/update" (unified from EventLog)
+  diff         String?   // JSON snapshot/change data (unified from EventLog)
+  author       String?   // Who made the change (from Shopify Events API)
+  instantAlertSentAt DateTime? // When instant alert email was sent (null = not sent)
+  moneySaved         Float?    // Estimated revenue saved by catching this change (USD)
 
   @@index([shop])
   @@index([shop, detectedAt])
   @@index([shop, eventType])
   @@index([digestedAt])
   @@index([shop, entityType, entityId])
+  @@index([shop, instantAlertSentAt])
 }
 
 // Product state snapshot for change detection
@@ -81,27 +92,26 @@ model ProductSnapshot {
   shop      String
   title     String
   status    String   // "active" | "draft" | "archived"
-  variants  String   // JSON: [{id, title, price, inventoryQuantity}]
   updatedAt DateTime @updatedAt
+  variants  VariantSnapshot[]
 
   @@unique([shop, id])
   @@index([shop])
 }
 
-model EventLog {
-  id          String   @id @default(uuid())
-  shop        String   // The store URL
-  shopifyId   String   // The Resource ID (e.g., Product ID)
-  topic       String   // e.g., "products/update"
-  author      String?  // The "Blame" retrieved via Events API
-  message     String   // Description of change
-  diff        String?  // JSON string: { old: value, new: value }
-  timestamp   DateTime @default(now())
-  webhookId   String?  @unique // Shopify webhook delivery ID for deduplication
+// Individual variant snapshot for change detection (normalized from JSON blob)
+model VariantSnapshot {
+  id                 String          @id @default(uuid())
+  shopifyVariantId   String          // Shopify variant ID (numeric string)
+  productSnapshotId  String          // FK to ProductSnapshot
+  shop               String          // Denormalized for efficient queries
+  title              String
+  price              String
+  inventoryQuantity  Int             @default(0)
+  productSnapshot    ProductSnapshot @relation(fields: [productSnapshotId], references: [id], onDelete: Cascade)
 
-  @@index([shop])
-  @@index([shop, timestamp])
-  @@index([shop, shopifyId, topic])
+  @@unique([productSnapshotId, shopifyVariantId])
+  @@index([shop, shopifyVariantId])
 }
 
 // Lightweight product cache for resolving names on delete

@@ -14,14 +14,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response();
   }
 
-  const order = payload as { id: number };
+  const domain = payload as { id: number };
 
   await queueWebhookJob({
     shop,
     topic,
-    resourceId: String(order.id),
+    resourceId: String(domain.id),
     payload,
     webhookId: webhookId || undefined,
+    delayMs: 2000,
   });
 
   return new Response();

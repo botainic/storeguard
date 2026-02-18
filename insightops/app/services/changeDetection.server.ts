@@ -8,9 +8,19 @@ import {
   shouldAlertInventoryZero as checkInventoryZero,
   shouldAlertLowStock as checkLowStock,
   formatVariantLabel,
+  isCriticalInstantAlert,
 } from "./changeDetection.utils";
 import { getProductSalesVelocity } from "./salesVelocity.server";
-import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
+import {
+  enrichPriceChange,
+  enrichInventoryZero,
+  enrichLowStock,
+  enrichVisibilityChange,
+  enrichThemePublish,
+  serializeContext,
+} from "./contextEnricher.server";
+import { estimateMoneySaved } from "./moneySaved.utils";
+import { diffScopes } from "./jobProcessor.utils";
 
 /**
  * Change Detection Service for StoreGuard
@@ -60,20 +70,21 @@ async function getProductSnapshot(shop: string, productId: string): Promise<{
 } | null> {
   const snapshot = await db.productSnapshot.findUnique({
     where: { shop_id: { shop, id: productId } },
+    include: { variants: true },
   });
 
   if (!snapshot) return null;
 
-  try {
-    const variants = JSON.parse(snapshot.variants) as VariantSnapshot[];
-    return {
-      title: snapshot.title,
-      status: snapshot.status,
-      variants,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    title: snapshot.title,
+    status: snapshot.status,
+    variants: snapshot.variants.map(v => ({
+      id: v.shopifyVariantId,
+      title: v.title,
+      price: v.price,
+      inventoryQuantity: v.inventoryQuantity,
+    })),
+  };
 }
 
 /**
@@ -84,21 +95,83 @@ async function updateProductSnapshot(
   productId: string,
   data: { title: string; status: string; variants: VariantSnapshot[] }
 ): Promise<void> {
-  await db.productSnapshot.upsert({
-    where: { shop_id: { shop, id: productId } },
-    create: {
-      id: productId,
+  await db.$transaction(async (tx) => {
+    await tx.productSnapshot.upsert({
+      where: { shop_id: { shop, id: productId } },
+      create: {
+        id: productId,
+        shop,
+        title: data.title,
+        status: data.status,
+      },
+      update: {
+        title: data.title,
+        status: data.status,
+      },
+    });
+
+    for (const v of data.variants) {
+      await tx.variantSnapshot.upsert({
+        where: {
+          productSnapshotId_shopifyVariantId: {
+            productSnapshotId: productId,
+            shopifyVariantId: String(v.id),
+          },
+        },
+        create: {
+          productSnapshotId: productId,
+          shop,
+          shopifyVariantId: String(v.id),
+          title: v.title,
+          price: String(v.price),
+          inventoryQuantity: v.inventoryQuantity,
+        },
+        update: {
+          title: v.title,
+          price: String(v.price),
+          inventoryQuantity: v.inventoryQuantity,
+        },
+      });
+    }
+  });
+}
+
+/** Max instant alert emails per shop per hour */
+const INSTANT_ALERT_RATE_LIMIT = 10;
+
+/**
+ * Decide whether to send an instant alert for a change event.
+ * Returns true only when:
+ * 1. The shop has instant alerts enabled (Pro + toggle on + email set)
+ * 2. The event is critical (price drop >50%, out of stock, visibility hidden, domain removed, permissions expanded)
+ * 3. The shop has not exceeded the rate limit (max 10 per hour)
+ */
+export async function shouldSendInstantAlert(
+  shop: string,
+  event: { eventType: string; importance: string; afterValue?: string | null }
+): Promise<boolean> {
+  // 1. Feature gate: Pro plan + instant alerts enabled + email configured
+  const enabled = await hasInstantAlerts(shop);
+  if (!enabled) return false;
+
+  // 2. Severity check: only critical events
+  if (!isCriticalInstantAlert(event)) return false;
+
+  // 3. Rate limit: max 10 instant alert emails per shop per hour
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const recentAlertCount = await db.changeEvent.count({
+    where: {
       shop,
-      title: data.title,
-      status: data.status,
-      variants: JSON.stringify(data.variants),
-    },
-    update: {
-      title: data.title,
-      status: data.status,
-      variants: JSON.stringify(data.variants),
+      instantAlertSentAt: { not: null, gte: oneHourAgo },
     },
   });
+
+  if (recentAlertCount >= INSTANT_ALERT_RATE_LIMIT) {
+    console.log(`[StoreGuard] Rate limit reached for ${shop}: ${recentAlertCount} instant alerts in last hour`);
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -106,9 +179,9 @@ async function updateProductSnapshot(
  */
 async function createChangeEvent(data: {
   shop: string;
-  entityType: "product" | "variant" | "theme";
+  entityType: string;
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
+  eventType: string;
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -117,8 +190,18 @@ async function createChangeEvent(data: {
   importance?: "high" | "medium" | "low";
   groupId?: string;
   contextData?: string | null;
+  moneySaved?: number | null;
 }): Promise<void> {
   try {
+    const importance = data.importance ?? "medium";
+
+    // Check instant alert eligibility BEFORE creating the event (for rate limit accuracy)
+    const sendInstant = await shouldSendInstantAlert(data.shop, {
+      eventType: data.eventType,
+      importance,
+      afterValue: data.afterValue,
+    });
+
     const event = await db.changeEvent.create({
       data: {
         shop: data.shop,
@@ -130,16 +213,17 @@ async function createChangeEvent(data: {
         afterValue: data.afterValue,
         webhookId: data.webhookId,
         source: data.source ?? "webhook",
-        importance: data.importance ?? "medium",
+        importance,
         groupId: data.groupId,
         contextData: data.contextData ?? null,
+        instantAlertSentAt: sendInstant ? new Date() : null,
+        moneySaved: data.moneySaved ?? null,
       },
     });
     console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
 
-    // Send instant alert if enabled (Pro feature)
-    const shouldSendInstant = await hasInstantAlerts(data.shop);
-    if (shouldSendInstant) {
+    // Send instant alert for critical events only
+    if (sendInstant) {
       const alertEmail = await getShopAlertEmail(data.shop);
       if (alertEmail) {
         // Fire and forget - don't block on email sending
@@ -149,7 +233,7 @@ async function createChangeEvent(data: {
             resourceName: data.resourceName,
             beforeValue: data.beforeValue,
             afterValue: data.afterValue,
-            importance: data.importance ?? "medium",
+            importance,
             detectedAt: event.detectedAt,
             contextData: data.contextData ?? null,
           },
@@ -162,7 +246,7 @@ async function createChangeEvent(data: {
     }
   } catch (error: unknown) {
     // Handle duplicate webhookId (already processed)
-    if (error instanceof Error && error.message.includes("Unique constraint")) {
+    if ((error as any)?.code === "P2002") {
       console.log(`[StoreGuard] Duplicate event for webhookId ${data.webhookId}, skipping`);
       return;
     }
@@ -221,15 +305,20 @@ export async function detectPriceChanges(
       const variantLabel = formatVariantLabel(product.title, newVariant.title);
       const importance = calculatePriceImportance(oldVariant.price, newVariant.price);
 
-      // Build context data with sales velocity
-      const priceDiff = Math.abs(parseFloat(newVariant.price) - parseFloat(oldVariant.price));
-      const velocityContext = formatVelocityContext(velocity);
-      const revenueImpact = estimateRevenueImpact(velocity, "price_error", {
-        priceDifference: priceDiff,
+      const enriched = enrichPriceChange(
+        variantLabel,
+        `$${oldVariant.price}`,
+        `$${newVariant.price}`,
+        velocity
+      );
+      const contextData = serializeContext(enriched);
+
+      const moneySaved = estimateMoneySaved({
+        eventType: "price_change",
+        velocity,
+        beforeValue: `$${oldVariant.price}`,
+        afterValue: `$${newVariant.price}`,
       });
-      const contextData = (velocityContext || revenueImpact !== null)
-        ? JSON.stringify({ velocityContext, revenueImpact })
-        : null;
 
       await createChangeEvent({
         shop,
@@ -242,6 +331,7 @@ export async function detectPriceChanges(
         webhookId: `${webhookId}-price-${newVariant.id}`,
         importance: importance as "high" | "medium" | "low",
         contextData,
+        moneySaved,
       });
       changesDetected++;
     }
@@ -304,11 +394,20 @@ export async function detectVisibilityChanges(
       // Non-critical
     }
 
-    const velocityContext = formatVelocityContext(velocity);
-    const revenueImpact = estimateRevenueImpact(velocity, "visibility", {});
-    const contextData = (velocityContext || revenueImpact !== null)
-      ? JSON.stringify({ velocityContext, revenueImpact })
-      : null;
+    const enriched = enrichVisibilityChange(
+      product.title,
+      oldSnapshot.status,
+      product.status,
+      velocity
+    );
+    const contextData = serializeContext(enriched);
+
+    const moneySaved = estimateMoneySaved({
+      eventType: "visibility_change",
+      velocity,
+      beforeValue: oldSnapshot.status,
+      afterValue: product.status,
+    });
 
     await createChangeEvent({
       shop,
@@ -321,6 +420,7 @@ export async function detectVisibilityChanges(
       webhookId: `${webhookId}-status`,
       importance,
       contextData,
+      moneySaved,
     });
 
     // Update snapshot
@@ -368,7 +468,8 @@ export async function detectInventoryZero(
   variantTitle: string,
   newQuantity: number,
   previousQuantity: number | null, // Must be provided from webhook processing
-  webhookId: string
+  webhookId: string,
+  locationContext?: string | null
 ): Promise<boolean> {
   // Check if shop wants to track inventory
   if (!await canTrackFeature(shop, "inventory")) {
@@ -404,23 +505,34 @@ export async function detectInventoryZero(
     // Non-critical
   }
 
-  const velocityContext = formatVelocityContext(velocity);
-  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
-  const contextData = (velocityContext || revenueImpact !== null)
-    ? JSON.stringify({ velocityContext, revenueImpact })
-    : null;
+  const displayName = formatVariantLabel(productTitle, variantTitle);
+  const enriched = enrichInventoryZero(
+    displayName,
+    String(previousQuantity),
+    velocity,
+    locationContext ?? null
+  );
+  const contextData = serializeContext(enriched);
+
+  const moneySaved = estimateMoneySaved({
+    eventType: "inventory_zero",
+    velocity,
+    beforeValue: String(previousQuantity),
+    afterValue: "0",
+  });
 
   await createChangeEvent({
     shop,
     entityType: "variant",
     entityId: inventoryItemId,
     eventType: "inventory_zero",
-    resourceName: formatVariantLabel(productTitle, variantTitle),
+    resourceName: displayName,
     beforeValue: String(previousQuantity),
     afterValue: "0",
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
-    importance: "high", // Out of stock is always high importance
+    importance: "high",
     contextData,
+    moneySaved,
   });
 
   return true;
@@ -439,7 +551,8 @@ export async function detectLowStock(
   variantTitle: string,
   newQuantity: number,
   previousQuantity: number | null,
-  webhookId: string
+  webhookId: string,
+  locationContext?: string | null
 ): Promise<boolean> {
   // Get the shop's low stock threshold
   const threshold = await getLowStockThreshold(shop);
@@ -478,11 +591,21 @@ export async function detectLowStock(
     // Non-critical
   }
 
-  const velocityContext = formatVelocityContext(velocity);
-  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
-  const contextData = (velocityContext || revenueImpact !== null)
-    ? JSON.stringify({ velocityContext, revenueImpact })
-    : null;
+  const enriched = enrichLowStock(
+    displayName,
+    String(previousQuantity),
+    String(newQuantity),
+    velocity,
+    locationContext ?? null
+  );
+  const contextData = serializeContext(enriched);
+
+  const moneySaved = estimateMoneySaved({
+    eventType: "inventory_low",
+    velocity,
+    beforeValue: String(previousQuantity),
+    afterValue: String(newQuantity),
+  });
 
   await createChangeEvent({
     shop,
@@ -493,8 +616,9 @@ export async function detectLowStock(
     beforeValue: String(previousQuantity),
     afterValue: String(newQuantity),
     webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
-    importance: "medium", // Low stock is medium importance (zero is high)
+    importance: "medium",
     contextData,
+    moneySaved,
   });
 
   console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} (threshold: ${threshold})`);
@@ -525,16 +649,328 @@ export async function recordThemePublish(
     return false;
   }
 
+  const enriched = enrichThemePublish(theme.name);
+  const contextData = serializeContext(enriched);
+
   await createChangeEvent({
     shop,
     entityType: "theme",
     entityId: String(theme.id),
     eventType: "theme_publish",
     resourceName: theme.name,
-    beforeValue: null, // We don't know what theme was live before
+    beforeValue: null,
     afterValue: "main",
     webhookId: `${webhookId}-theme`,
-    importance: "high", // Theme publish is always important
+    importance: "high",
+    contextData,
+  });
+
+  return true;
+}
+
+// ============================================
+// COLLECTION CHANGE DETECTION
+// ============================================
+
+/**
+ * Record a collection created event
+ */
+export async function recordCollectionCreated(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_created",
+    resourceName: collectionTitle,
+    beforeValue: null,
+    afterValue: collectionTitle,
+    webhookId: `${webhookId}-collection-created`,
+    importance: "low",
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection updated event
+ */
+export async function recordCollectionUpdated(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_updated",
+    resourceName: collectionTitle,
+    beforeValue: null,
+    afterValue: collectionTitle,
+    webhookId: `${webhookId}-collection-updated`,
+    importance: "medium",
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection deleted event
+ * HIGH importance — deleting a collection breaks links and navigation
+ */
+export async function recordCollectionDeleted(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_deleted",
+    resourceName: collectionTitle,
+    beforeValue: collectionTitle,
+    afterValue: null,
+    webhookId: `${webhookId}-collection-deleted`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+// ============================================
+// DISCOUNT CHANGE DETECTION (Pro only)
+// ============================================
+
+/**
+ * Record a discount created event
+ */
+export async function recordDiscountCreated(
+  shop: string,
+  discountId: string,
+  discountTitle: string,
+  discountValue: string | null,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    return false;
+  }
+
+  // Large discounts (>=50%) are high importance
+  let importance: "high" | "medium" | "low" = "medium";
+  if (discountValue) {
+    const numericValue = parseFloat(discountValue);
+    if (!isNaN(numericValue) && numericValue >= 50) {
+      importance = "high";
+    }
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: discountId,
+    eventType: "discount_created",
+    resourceName: discountTitle,
+    beforeValue: null,
+    afterValue: discountValue ? `${discountValue}% off` : discountTitle,
+    webhookId: `${webhookId}-discount-created`,
+    importance,
+  });
+
+  return true;
+}
+
+/**
+ * Record a discount updated event
+ */
+export async function recordDiscountUpdated(
+  shop: string,
+  discountId: string,
+  discountTitle: string,
+  discountValue: string | null,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: discountId,
+    eventType: "discount_changed",
+    resourceName: discountTitle,
+    beforeValue: null,
+    afterValue: discountValue ? `${discountValue}% off` : discountTitle,
+    webhookId: `${webhookId}-discount-changed`,
+    importance: "medium",
+  });
+
+  return true;
+}
+
+/**
+ * Record a discount deleted event
+ * HIGH importance — deleting a discount can break promotions
+ */
+export async function recordDiscountDeleted(
+  shop: string,
+  discountId: string,
+  discountTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: discountId,
+    eventType: "discount_deleted",
+    resourceName: discountTitle,
+    beforeValue: discountTitle,
+    afterValue: null,
+    webhookId: `${webhookId}-discount-deleted`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+// ============================================
+// APP PERMISSION CHANGE DETECTION (Pro only)
+// ============================================
+
+/**
+ * Record an app permissions changed event.
+ * Diffs previous vs current scopes.
+ * HIGH importance for scope expansions (new permissions added).
+ */
+export async function recordAppPermissionsChanged(
+  shop: string,
+  previousScopes: string[],
+  currentScopes: string[],
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "app_permissions")) {
+    return false;
+  }
+
+  // Diff scopes
+  const { added, removed } = diffScopes(previousScopes, currentScopes);
+
+  // No actual change
+  if (added.length === 0 && removed.length === 0) {
+    return false;
+  }
+
+  // Scope expansions are HIGH importance (security risk)
+  const importance: "high" | "medium" | "low" = added.length > 0 ? "high" : "medium";
+
+  let resourceName = "App permissions";
+  if (added.length > 0 && removed.length === 0) {
+    resourceName = `${added.length} scope${added.length > 1 ? "s" : ""} added`;
+  } else if (removed.length > 0 && added.length === 0) {
+    resourceName = `${removed.length} scope${removed.length > 1 ? "s" : ""} removed`;
+  } else {
+    resourceName = `${added.length} added, ${removed.length} removed`;
+  }
+
+  const contextData = JSON.stringify({ added, removed });
+
+  await createChangeEvent({
+    shop,
+    entityType: "app",
+    entityId: shop,
+    eventType: "app_permissions_changed",
+    resourceName,
+    beforeValue: previousScopes.join(", "),
+    afterValue: currentScopes.join(", "),
+    webhookId: `${webhookId}-app-permissions`,
+    importance,
+    contextData,
+  });
+
+  return true;
+}
+
+// ============================================
+// DOMAIN CHANGE DETECTION (Pro only)
+// ============================================
+
+/**
+ * Record a domain changed event (created or updated)
+ * HIGH importance — domain changes affect SEO and store access
+ */
+export async function recordDomainChanged(
+  shop: string,
+  domainId: string,
+  domainHost: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "domains")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "domain",
+    entityId: domainId,
+    eventType: "domain_changed",
+    resourceName: domainHost,
+    beforeValue: null,
+    afterValue: domainHost,
+    webhookId: `${webhookId}-domain-changed`,
+    importance: "high",
+  });
+
+  return true;
+}
+
+/**
+ * Record a domain removed event
+ * HIGH importance — removing a domain breaks store access
+ */
+export async function recordDomainRemoved(
+  shop: string,
+  domainId: string,
+  domainHost: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "domains")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "domain",
+    entityId: domainId,
+    eventType: "domain_removed",
+    resourceName: domainHost,
+    beforeValue: domainHost,
+    afterValue: null,
+    webhookId: `${webhookId}-domain-removed`,
+    importance: "high",
   });
 
   return true;

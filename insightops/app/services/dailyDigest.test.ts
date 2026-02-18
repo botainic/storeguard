@@ -105,8 +105,29 @@ describe("formatEventType", () => {
     expect(formatEventType("theme_publish")).toBe("Theme Published");
   });
 
-  it("should return raw event type for unknown types", () => {
-    expect(formatEventType("unknown_event")).toBe("unknown_event");
+  it("should format collection event types", () => {
+    expect(formatEventType("collection_created")).toBe("Collection Created");
+    expect(formatEventType("collection_updated")).toBe("Collection Updated");
+    expect(formatEventType("collection_deleted")).toBe("Collection Deleted");
+  });
+
+  it("should format discount event types", () => {
+    expect(formatEventType("discount_created")).toBe("Discount Created");
+    expect(formatEventType("discount_changed")).toBe("Discount Changed");
+    expect(formatEventType("discount_deleted")).toBe("Discount Deleted");
+  });
+
+  it("should format app permissions event type", () => {
+    expect(formatEventType("app_permissions_changed")).toBe("App Permissions Changed");
+  });
+
+  it("should format domain event types", () => {
+    expect(formatEventType("domain_changed")).toBe("Domain Changed");
+    expect(formatEventType("domain_removed")).toBe("Domain Removed");
+  });
+
+  it("should title-case unknown event types", () => {
+    expect(formatEventType("unknown_event")).toBe("Unknown Event");
   });
 });
 
@@ -181,5 +202,68 @@ describe("formatEventForEmail", () => {
     const result = formatEventForEmail(event);
     expect(result).toContain("Dawn 2.0");
     expect(result).toContain("live theme");
+  });
+
+  it("should format collection created event", () => {
+    const event = makeEvent({
+      eventType: "collection_created",
+      entityType: "collection",
+      resourceName: "Summer Sale",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Summer Sale");
+    expect(result).toContain("created");
+  });
+
+  it("should format collection deleted event", () => {
+    const event = makeEvent({
+      eventType: "collection_deleted",
+      entityType: "collection",
+      resourceName: "Old Collection",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Old Collection");
+    expect(result).toContain("deleted");
+  });
+
+  it("should format discount created event", () => {
+    const event = makeEvent({
+      eventType: "discount_created",
+      entityType: "discount",
+      resourceName: "SUMMER50",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("SUMMER50");
+    expect(result).toContain("created");
+  });
+
+  it("should format discount changed event", () => {
+    const event = makeEvent({
+      eventType: "discount_changed",
+      entityType: "discount",
+      resourceName: "BLACKFRIDAY",
+      beforeValue: "20%",
+      afterValue: "50%",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("BLACKFRIDAY");
+    expect(result).toContain("20%");
+    expect(result).toContain("50%");
+  });
+
+  it("should format discount deleted event", () => {
+    const event = makeEvent({
+      eventType: "discount_deleted",
+      entityType: "discount",
+      resourceName: "EXPIRED10",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("EXPIRED10");
+    expect(result).toContain("deleted");
   });
 });

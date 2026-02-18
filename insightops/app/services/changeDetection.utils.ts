@@ -102,3 +102,66 @@ export function formatVariantLabel(
   }
   return `${productTitle} - ${variantTitle}`;
 }
+
+/**
+ * Determine if a change event is critical enough for an immediate instant alert.
+ *
+ * Critical events:
+ * - Price drop >50% (importance "high" on price_change)
+ * - Out of stock across all locations (inventory_zero)
+ * - Product hidden from store (visibility_change to draft/archived)
+ * - Domain removed (domain_removed)
+ * - App permissions expanded (app_permissions_changed with importance "high")
+ */
+export function isCriticalInstantAlert(event: {
+  eventType: string;
+  importance: string;
+  afterValue?: string | null;
+}): boolean {
+  switch (event.eventType) {
+    case "price_change":
+      return event.importance === "high";
+    case "inventory_zero":
+      return true;
+    case "visibility_change":
+      return event.afterValue === "draft" || event.afterValue === "archived";
+    case "domain_removed":
+      return true;
+    case "app_permissions_changed":
+      return event.importance === "high";
+    default:
+      return false;
+  }
+}
+
+/** Shape of each inventory level node returned by Shopify GraphQL */
+export interface InventoryLevelNode {
+  quantities: Array<{ quantity: number }>;
+  location: { id: string; name: string } | null;
+}
+
+/**
+ * Aggregate inventory level nodes into a total quantity and trigger location name.
+ * Used by fetchTotalInventory after paginating through all inventory levels.
+ */
+export function aggregateInventoryLevels(
+  nodes: InventoryLevelNode[],
+  triggerLocationId: number
+): { totalQuantity: number; locationName: string | null } {
+  let totalQuantity = 0;
+  let locationName: string | null = null;
+
+  for (const level of nodes) {
+    const qty = level.quantities?.[0]?.quantity ?? 0;
+    totalQuantity += qty;
+
+    // Identify the triggering location
+    const locGid: string = level.location?.id ?? "";
+    const locMatch = locGid.match(/\/Location\/(\d+)$/);
+    if (locMatch?.[1] === String(triggerLocationId)) {
+      locationName = level.location?.name ?? null;
+    }
+  }
+
+  return { totalQuantity, locationName };
+}
