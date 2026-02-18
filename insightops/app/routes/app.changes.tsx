@@ -62,15 +62,25 @@ export default function RecentChanges() {
       {events.length === 0 ? (
         <div
           style={{
-            background: "#f4f6f8",
-            borderRadius: 8,
-            padding: 32,
+            background: "#fff",
+            border: "1px solid #e1e3e5",
+            borderRadius: 10,
+            padding: "48px 32px",
             textAlign: "center",
-            color: "#637381",
           }}
         >
-          No changes detected yet. Changes will appear here when products are updated, visibility
-          changes, inventory hits zero, or themes are published.
+          <div style={{ marginBottom: 12 }}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#8c9196" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </div>
+          <h2 style={{ fontSize: 16, fontWeight: 600, color: "#202223", marginBottom: 6 }}>
+            No changes detected yet
+          </h2>
+          <p style={{ color: "#6d7175", fontSize: 14, maxWidth: 360, margin: "0 auto", lineHeight: 1.5 }}>
+            StoreGuard is monitoring your store. Changes will appear here when prices change,
+            products are hidden, inventory runs out, or themes are published.
+          </p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
