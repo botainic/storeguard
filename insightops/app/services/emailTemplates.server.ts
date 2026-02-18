@@ -87,24 +87,26 @@ function emailShell(title: string, body: string): string {
 
 /** Parse contextData JSON safely */
 function parseContextData(contextData: string | null | undefined): {
+  summary: string | null;
   velocityContext: string | null;
   locationContext: string | null;
   revenueImpact: number | null;
+  percentChange: number | null;
+  direction: "up" | "down" | null;
 } {
-  if (!contextData) return { velocityContext: null, locationContext: null, revenueImpact: null };
+  if (!contextData) return { summary: null, velocityContext: null, locationContext: null, revenueImpact: null, percentChange: null, direction: null };
   try {
-    const ctx = JSON.parse(contextData) as {
-      velocityContext?: string | null;
-      locationContext?: string | null;
-      revenueImpact?: number | null;
-    };
+    const ctx = JSON.parse(contextData) as Record<string, unknown>;
     return {
-      velocityContext: ctx.velocityContext ?? null,
-      locationContext: ctx.locationContext ?? null,
-      revenueImpact: ctx.revenueImpact ?? null,
+      summary: typeof ctx.summary === "string" ? ctx.summary : null,
+      velocityContext: typeof ctx.velocityContext === "string" ? ctx.velocityContext : null,
+      locationContext: typeof ctx.locationContext === "string" ? ctx.locationContext : null,
+      revenueImpact: typeof ctx.revenueImpact === "number" ? ctx.revenueImpact : null,
+      percentChange: typeof ctx.percentChange === "number" ? ctx.percentChange : null,
+      direction: ctx.direction === "up" || ctx.direction === "down" ? ctx.direction : null,
     };
   } catch {
-    return { velocityContext: null, locationContext: null, revenueImpact: null };
+    return { summary: null, velocityContext: null, locationContext: null, revenueImpact: null, percentChange: null, direction: null };
   }
 }
 
@@ -125,10 +127,20 @@ export function formatDigestChangeDescription(event: DigestEvent): string {
     hour12: true,
   });
 
-  const { velocityContext, locationContext } = parseContextData(event.contextData);
+  const ctx = parseContextData(event.contextData);
+
+  // Use enriched summary when available for price, inventory, visibility, theme events
+  if (ctx.summary) {
+    const revenueNote = ctx.revenueImpact !== null
+      ? ` &mdash; ~$${ctx.revenueImpact.toFixed(2)}/hr at risk`
+      : "";
+    return `${ctx.summary}${revenueNote} &bull; ${time}`;
+  }
+
+  // Fallback for events without enriched context (collections, discounts, etc.)
   let suffix = "";
-  if (locationContext) suffix += ` &mdash; ${locationContext}`;
-  if (velocityContext) suffix += ` &mdash; ${velocityContext}`;
+  if (ctx.locationContext) suffix += ` &mdash; ${ctx.locationContext}`;
+  if (ctx.velocityContext) suffix += ` &mdash; ${ctx.velocityContext}`;
 
   switch (event.eventType) {
     case "price_change":
@@ -342,8 +354,14 @@ export function getInstantAlertSubject(event: InstantAlertEvent, shopName: strin
 
 /** Build the change description for an instant alert */
 export function buildInstantAlertDescription(event: InstantAlertEvent): string {
-  const { velocityContext, locationContext } = parseContextData(event.contextData);
+  const ctx = parseContextData(event.contextData);
 
+  // Use enriched summary when available
+  if (ctx.summary) {
+    return ctx.summary;
+  }
+
+  // Fallback for events without enriched context
   let description = "";
   switch (event.eventType) {
     case "price_change":
@@ -392,8 +410,8 @@ export function buildInstantAlertDescription(event: InstantAlertEvent): string {
       description = `${event.beforeValue || ""} &rarr; ${event.afterValue || ""}`;
   }
 
-  if (locationContext) description += ` &mdash; ${locationContext}`;
-  if (velocityContext) description += ` &mdash; ${velocityContext}`;
+  if (ctx.locationContext) description += ` &mdash; ${ctx.locationContext}`;
+  if (ctx.velocityContext) description += ` &mdash; ${ctx.velocityContext}`;
 
   return description;
 }

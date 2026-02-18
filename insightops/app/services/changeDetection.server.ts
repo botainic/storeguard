@@ -11,7 +11,14 @@ import {
   isCriticalInstantAlert,
 } from "./changeDetection.utils";
 import { getProductSalesVelocity } from "./salesVelocity.server";
-import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
+import {
+  enrichPriceChange,
+  enrichInventoryZero,
+  enrichLowStock,
+  enrichVisibilityChange,
+  enrichThemePublish,
+  serializeContext,
+} from "./contextEnricher.server";
 
 /**
  * Change Detection Service for StoreGuard
@@ -294,15 +301,13 @@ export async function detectPriceChanges(
       const variantLabel = formatVariantLabel(product.title, newVariant.title);
       const importance = calculatePriceImportance(oldVariant.price, newVariant.price);
 
-      // Build context data with sales velocity
-      const priceDiff = Math.abs(parseFloat(newVariant.price) - parseFloat(oldVariant.price));
-      const velocityContext = formatVelocityContext(velocity);
-      const revenueImpact = estimateRevenueImpact(velocity, "price_error", {
-        priceDifference: priceDiff,
-      });
-      const contextData = (velocityContext || revenueImpact !== null)
-        ? JSON.stringify({ velocityContext, revenueImpact })
-        : null;
+      const enriched = enrichPriceChange(
+        variantLabel,
+        `$${oldVariant.price}`,
+        `$${newVariant.price}`,
+        velocity
+      );
+      const contextData = serializeContext(enriched);
 
       await createChangeEvent({
         shop,
@@ -377,11 +382,13 @@ export async function detectVisibilityChanges(
       // Non-critical
     }
 
-    const velocityContext = formatVelocityContext(velocity);
-    const revenueImpact = estimateRevenueImpact(velocity, "visibility", {});
-    const contextData = (velocityContext || revenueImpact !== null)
-      ? JSON.stringify({ velocityContext, revenueImpact })
-      : null;
+    const enriched = enrichVisibilityChange(
+      product.title,
+      oldSnapshot.status,
+      product.status,
+      velocity
+    );
+    const contextData = serializeContext(enriched);
 
     await createChangeEvent({
       shop,
@@ -478,24 +485,25 @@ export async function detectInventoryZero(
     // Non-critical
   }
 
-  const velocityContext = formatVelocityContext(velocity);
-  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
-  const ctxObj: Record<string, unknown> = {};
-  if (velocityContext) ctxObj.velocityContext = velocityContext;
-  if (revenueImpact !== null) ctxObj.revenueImpact = revenueImpact;
-  if (locationContext) ctxObj.locationContext = locationContext;
-  const contextData = Object.keys(ctxObj).length > 0 ? JSON.stringify(ctxObj) : null;
+  const displayName = formatVariantLabel(productTitle, variantTitle);
+  const enriched = enrichInventoryZero(
+    displayName,
+    String(previousQuantity),
+    velocity,
+    locationContext ?? null
+  );
+  const contextData = serializeContext(enriched);
 
   await createChangeEvent({
     shop,
     entityType: "variant",
     entityId: inventoryItemId,
     eventType: "inventory_zero",
-    resourceName: formatVariantLabel(productTitle, variantTitle),
+    resourceName: displayName,
     beforeValue: String(previousQuantity),
     afterValue: "0",
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
-    importance: "high", // Out of stock is always high importance
+    importance: "high",
     contextData,
   });
 
@@ -555,13 +563,14 @@ export async function detectLowStock(
     // Non-critical
   }
 
-  const velocityContext = formatVelocityContext(velocity);
-  const revenueImpact = estimateRevenueImpact(velocity, "stockout", {});
-  const ctxObj: Record<string, unknown> = {};
-  if (velocityContext) ctxObj.velocityContext = velocityContext;
-  if (revenueImpact !== null) ctxObj.revenueImpact = revenueImpact;
-  if (locationContext) ctxObj.locationContext = locationContext;
-  const contextData = Object.keys(ctxObj).length > 0 ? JSON.stringify(ctxObj) : null;
+  const enriched = enrichLowStock(
+    displayName,
+    String(previousQuantity),
+    String(newQuantity),
+    velocity,
+    locationContext ?? null
+  );
+  const contextData = serializeContext(enriched);
 
   await createChangeEvent({
     shop,
@@ -572,7 +581,7 @@ export async function detectLowStock(
     beforeValue: String(previousQuantity),
     afterValue: String(newQuantity),
     webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
-    importance: "medium", // Low stock is medium importance (zero is high)
+    importance: "medium",
     contextData,
   });
 
@@ -604,16 +613,20 @@ export async function recordThemePublish(
     return false;
   }
 
+  const enriched = enrichThemePublish(theme.name);
+  const contextData = serializeContext(enriched);
+
   await createChangeEvent({
     shop,
     entityType: "theme",
     entityId: String(theme.id),
     eventType: "theme_publish",
     resourceName: theme.name,
-    beforeValue: null, // We don't know what theme was live before
+    beforeValue: null,
     afterValue: "main",
     webhookId: `${webhookId}-theme`,
-    importance: "high", // Theme publish is always important
+    importance: "high",
+    contextData,
   });
 
   return true;
