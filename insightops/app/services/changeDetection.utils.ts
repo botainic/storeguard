@@ -102,3 +102,82 @@ export function formatVariantLabel(
   }
   return `${productTitle} - ${variantTitle}`;
 }
+
+/**
+ * Determine importance for a discount event.
+ * High importance: >50% discount or unlimited usage.
+ * Medium importance: everything else.
+ */
+export function calculateDiscountImportance(
+  discountValue: number | null,
+  discountType: string | null,
+  usageLimit: number | null
+): "high" | "medium" {
+  // Unlimited usage = high importance
+  if (usageLimit === null || usageLimit === 0) {
+    return "high";
+  }
+
+  // Percentage discount >50% = high importance
+  if (discountType === "percentage" && discountValue !== null && discountValue > 50) {
+    return "high";
+  }
+
+  return "medium";
+}
+
+/**
+ * Format a discount value for human-readable display.
+ * e.g., "50%" for percentage, "$10.00" for fixed_amount
+ */
+export function formatDiscountValue(
+  value: number | string | null,
+  type: string | null
+): string {
+  if (value === null || value === undefined) return "unknown";
+  const numValue = typeof value === "string" ? parseFloat(value) : value;
+  if (isNaN(numValue)) return String(value);
+
+  if (type === "percentage") {
+    return `${numValue}%`;
+  }
+  return `$${numValue.toFixed(2)}`;
+}
+
+/**
+ * Build a concise context string for discount events.
+ * e.g., "50% off, code: SUMMER50, no usage limit, expires 2026-03-01"
+ */
+export function buildDiscountContext(info: {
+  title: string;
+  code?: string | null;
+  value?: number | string | null;
+  valueType?: string | null;
+  usageLimit?: number | null;
+  endsAt?: string | null;
+}): string {
+  const parts: string[] = [];
+
+  if (info.value !== null && info.value !== undefined && info.valueType) {
+    parts.push(`${formatDiscountValue(info.value, info.valueType)} off`);
+  }
+
+  if (info.code) {
+    parts.push(`code: ${info.code}`);
+  }
+
+  if (info.usageLimit === null || info.usageLimit === 0) {
+    parts.push("no usage limit");
+  } else if (info.usageLimit) {
+    parts.push(`limit: ${info.usageLimit} uses`);
+  }
+
+  if (info.endsAt) {
+    const date = new Date(info.endsAt);
+    if (!isNaN(date.getTime())) {
+      parts.push(`expires ${date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`);
+    }
+  }
+
+  return parts.join(", ");
+}

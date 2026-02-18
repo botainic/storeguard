@@ -7,6 +7,7 @@ export interface ShopSettings {
   trackVisibility: boolean;
   trackInventory: boolean;
   trackThemes: boolean;
+  trackDiscounts: boolean;
   lowStockThreshold: number;
   instantAlerts: boolean;
 }
@@ -27,6 +28,7 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
       trackVisibility: true,
       trackInventory: true,
       trackThemes: false, // Pro only by default
+      trackDiscounts: false, // Pro only by default
       installedAt: new Date(),
     },
     update: {
@@ -44,6 +46,7 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackDiscounts: shop.trackDiscounts,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -67,6 +70,7 @@ export async function getShopSettings(shopDomain: string): Promise<ShopSettings 
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackDiscounts: shop.trackDiscounts,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -95,6 +99,13 @@ export async function updateShopSettings(
     trackThemes = false;
   }
 
+  // Discount tracking is Pro-only
+  let trackDiscounts = settings.trackDiscounts ?? shop.trackDiscounts;
+  if (shop.plan !== "pro" && trackDiscounts) {
+    console.log(`[StoreGuard] Blocking trackDiscounts for free plan: ${shopDomain}`);
+    trackDiscounts = false;
+  }
+
   // Instant alerts are Pro-only
   let instantAlerts = settings.instantAlerts ?? shop.instantAlerts;
   if (shop.plan !== "pro" && instantAlerts) {
@@ -115,6 +126,7 @@ export async function updateShopSettings(
       trackVisibility: settings.trackVisibility ?? shop.trackVisibility,
       trackInventory: settings.trackInventory ?? shop.trackInventory,
       trackThemes,
+      trackDiscounts,
       lowStockThreshold,
       instantAlerts,
     },
@@ -129,6 +141,7 @@ export async function updateShopSettings(
     trackVisibility: updated.trackVisibility,
     trackInventory: updated.trackInventory,
     trackThemes: updated.trackThemes,
+    trackDiscounts: updated.trackDiscounts,
     lowStockThreshold: updated.lowStockThreshold,
     instantAlerts: updated.instantAlerts,
   };
@@ -173,6 +186,7 @@ export async function downgradeShopToFree(shopDomain: string): Promise<void> {
     data: {
       plan: "free",
       trackThemes: false, // Disable Pro-only features
+      trackDiscounts: false, // Disable Pro-only features
       instantAlerts: false, // Disable Pro-only features
     },
   });
@@ -195,7 +209,7 @@ export async function isProPlan(shopDomain: string): Promise<boolean> {
  */
 export async function canTrackFeature(
   shopDomain: string,
-  feature: "prices" | "visibility" | "inventory" | "themes"
+  feature: "prices" | "visibility" | "inventory" | "themes" | "discounts"
 ): Promise<boolean> {
   const shop = await db.shop.findUnique({
     where: { shopifyDomain: shopDomain },
@@ -212,6 +226,8 @@ export async function canTrackFeature(
       return shop.trackInventory;
     case "themes":
       return shop.plan === "pro" && shop.trackThemes;
+    case "discounts":
+      return shop.plan === "pro" && shop.trackDiscounts;
     default:
       return false;
   }

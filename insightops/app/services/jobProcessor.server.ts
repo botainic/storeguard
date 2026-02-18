@@ -11,6 +11,9 @@ import {
   detectInventoryZero,
   detectLowStock,
   deleteProductSnapshot,
+  recordDiscountCreated,
+  recordDiscountChanged,
+  recordDiscountDeleted,
 } from "./changeDetection.server";
 
 // Full product payload from Shopify webhook
@@ -66,6 +69,19 @@ interface CollectionPayload {
     alt: string | null;
     position: number;
   } | null;
+}
+
+interface DiscountPayload {
+  id: number;
+  title: string;
+  code?: string;
+  value_type?: string;
+  value?: string;
+  usage_limit?: number | null;
+  ends_at?: string | null;
+  starts_at?: string | null;
+  status?: string;
+  discount_type?: string;
 }
 
 interface InventoryLevelPayload {
@@ -825,6 +841,31 @@ async function processInventoryUpdate(
 }
 
 /**
+ * Process a discount webhook job
+ */
+async function processDiscount(
+  shop: string,
+  topic: string,
+  payload: DiscountPayload,
+  webhookId: string | null
+): Promise<void> {
+  if (!webhookId) {
+    console.log(`[StoreGuard] No webhookId for discount event, skipping`);
+    return;
+  }
+
+  if (topic.includes("create")) {
+    await recordDiscountCreated(shop, payload, webhookId);
+  } else if (topic.includes("update")) {
+    await recordDiscountChanged(shop, payload, webhookId);
+  } else if (topic.includes("delete")) {
+    await recordDiscountDeleted(shop, payload, webhookId);
+  }
+
+  console.log(`[StoreGuard] Processed discount ${topic} for ${payload.title || payload.id}`);
+}
+
+/**
  * Process a single job
  */
 async function processJob(job: {
@@ -866,6 +907,11 @@ async function processJob(job: {
       break;
     case "inventory/levels/update":
       await processInventoryUpdate(job.shop, session.accessToken, payload, job.webhookId);
+      break;
+    case "discounts/create":
+    case "discounts/update":
+    case "discounts/delete":
+      await processDiscount(job.shop, normalizedTopic, payload, job.webhookId);
       break;
     default:
       console.log(`[StoreGuard] Unknown topic: ${job.topic} (normalized: ${normalizedTopic})`);

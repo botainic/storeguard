@@ -8,6 +8,8 @@ import {
   shouldAlertInventoryZero as checkInventoryZero,
   shouldAlertLowStock as checkLowStock,
   formatVariantLabel,
+  calculateDiscountImportance,
+  buildDiscountContext,
 } from "./changeDetection.utils";
 
 /**
@@ -104,9 +106,9 @@ async function updateProductSnapshot(
  */
 async function createChangeEvent(data: {
   shop: string;
-  entityType: "product" | "variant" | "theme";
+  entityType: "product" | "variant" | "theme" | "discount";
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
+  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish" | "discount_created" | "discount_changed" | "discount_deleted";
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -497,4 +499,152 @@ export async function deleteProductSnapshot(shop: string, productId: string): Pr
   } catch {
     // Snapshot may not exist
   }
+}
+
+// ============================================
+// DISCOUNT MONITORING
+// ============================================
+
+// Discount payload from Shopify webhook
+interface DiscountPayload {
+  id: number;
+  title: string;
+  code?: string;
+  value_type?: string; // "percentage" | "fixed_amount"
+  value?: string; // "-10.0" for percentage or amount
+  usage_limit?: number | null;
+  ends_at?: string | null;
+  starts_at?: string | null;
+  status?: string;
+  discount_type?: string; // "code_discount" | "automatic_discount"
+}
+
+/**
+ * Parse the discount value from Shopify's format.
+ * Shopify sends values as negative strings (e.g., "-10.0" for 10%).
+ */
+function parseDiscountValue(value: string | undefined | null): number | null {
+  if (!value) return null;
+  const parsed = parseFloat(value);
+  if (isNaN(parsed)) return null;
+  return Math.abs(parsed);
+}
+
+/**
+ * Record a discount creation event (Pro only)
+ */
+export async function recordDiscountCreated(
+  shop: string,
+  discount: DiscountPayload,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    console.log(`[StoreGuard] Discount tracking disabled for ${shop}`);
+    return false;
+  }
+
+  const discountValue = parseDiscountValue(discount.value);
+  const importance = calculateDiscountImportance(
+    discountValue,
+    discount.value_type ?? null,
+    discount.usage_limit ?? null
+  );
+
+  const context = buildDiscountContext({
+    title: discount.title,
+    code: discount.code,
+    value: discountValue,
+    valueType: discount.value_type,
+    usageLimit: discount.usage_limit ?? null,
+    endsAt: discount.ends_at,
+  });
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: String(discount.id),
+    eventType: "discount_created",
+    resourceName: discount.title,
+    beforeValue: null,
+    afterValue: context,
+    webhookId: `${webhookId}-discount-created`,
+    importance,
+  });
+
+  return true;
+}
+
+/**
+ * Record a discount change event (Pro only)
+ */
+export async function recordDiscountChanged(
+  shop: string,
+  discount: DiscountPayload,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    console.log(`[StoreGuard] Discount tracking disabled for ${shop}`);
+    return false;
+  }
+
+  const discountValue = parseDiscountValue(discount.value);
+  const importance = calculateDiscountImportance(
+    discountValue,
+    discount.value_type ?? null,
+    discount.usage_limit ?? null
+  );
+
+  const context = buildDiscountContext({
+    title: discount.title,
+    code: discount.code,
+    value: discountValue,
+    valueType: discount.value_type,
+    usageLimit: discount.usage_limit ?? null,
+    endsAt: discount.ends_at,
+  });
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: String(discount.id),
+    eventType: "discount_changed",
+    resourceName: discount.title,
+    beforeValue: null, // We don't have the previous state from webhook
+    afterValue: context,
+    webhookId: `${webhookId}-discount-changed`,
+    importance,
+  });
+
+  return true;
+}
+
+/**
+ * Record a discount deletion event (Pro only)
+ * Always high importance — deleted discounts may have been in active use.
+ */
+export async function recordDiscountDeleted(
+  shop: string,
+  discount: DiscountPayload,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "discounts")) {
+    console.log(`[StoreGuard] Discount tracking disabled for ${shop}`);
+    return false;
+  }
+
+  const displayName = discount.title || `Discount #${discount.id}`;
+
+  await createChangeEvent({
+    shop,
+    entityType: "discount",
+    entityId: String(discount.id),
+    eventType: "discount_deleted",
+    resourceName: displayName,
+    beforeValue: displayName,
+    afterValue: "deleted",
+    webhookId: `${webhookId}-discount-deleted`,
+    importance: "high", // Deleted discounts are always high importance
+  });
+
+  return true;
 }

@@ -28,6 +28,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   const trackVisibility = formData.get("trackVisibility") === "on";
   const trackInventory = formData.get("trackInventory") === "on";
   const trackThemes = formData.get("trackThemes") === "on";
+  const trackDiscounts = formData.get("trackDiscounts") === "on";
   const lowStockThreshold = parseInt(formData.get("lowStockThreshold") as string) || 5;
   const instantAlerts = formData.get("instantAlerts") === "on";
 
@@ -50,6 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
       trackVisibility,
       trackInventory,
       trackThemes,
+      trackDiscounts,
       lowStockThreshold,
       instantAlerts,
     });
@@ -205,6 +207,14 @@ export default function Settings() {
             label="Theme publishes"
             description="Track when a new theme becomes your live theme"
             defaultChecked={settings.trackThemes}
+            disabled={settings.plan !== "pro"}
+            proOnly
+          />
+          <Toggle
+            name="trackDiscounts"
+            label="Discount changes"
+            description="Track when discount codes are created, modified, or deleted"
+            defaultChecked={settings.trackDiscounts}
             disabled={settings.plan !== "pro"}
             proOnly
           />

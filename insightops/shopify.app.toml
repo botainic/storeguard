@@ -43,10 +43,22 @@ api_version = "2025-10"
   topics = [ "themes/publish" ]
   uri = "/webhooks/themes/publish"
 
+  [[webhooks.subscriptions]]
+  topics = [ "discounts/create" ]
+  uri = "/webhooks/discounts/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "discounts/update" ]
+  uri = "/webhooks/discounts/update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "discounts/delete" ]
+  uri = "/webhooks/discounts/delete"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-# StoreGuard scopes: products for change detection, inventory for stock alerts, themes for publish tracking
-scopes = "read_inventory,read_products,read_themes"
+# StoreGuard scopes: products for change detection, inventory for stock alerts, themes for publish tracking, discounts for discount monitoring
+scopes = "read_inventory,read_products,read_themes,read_discounts"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 

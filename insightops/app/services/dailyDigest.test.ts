@@ -37,6 +37,9 @@ function makeDigest(overrides: Partial<DigestSummary> = {}): DigestSummary {
       inventory_low: [],
       inventory_zero: [],
       theme_publish: [],
+      discount_created: [],
+      discount_changed: [],
+      discount_deleted: [],
     },
     ...overrides,
   };
@@ -56,6 +59,9 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [makeEvent({ id: "iz-1" })],
         theme_publish: [makeEvent({ id: "tp-1" })],
+        discount_created: [],
+        discount_changed: [],
+        discount_deleted: [],
       },
     });
 
@@ -76,6 +82,9 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [],
         theme_publish: [],
+        discount_created: [],
+        discount_changed: [],
+        discount_deleted: [],
       },
     });
 

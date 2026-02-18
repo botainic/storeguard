@@ -127,6 +127,33 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
     ));
   }
 
+  // Discount created
+  if (digest.eventsByType.discount_created.length > 0) {
+    sections.push(buildEventSection(
+      "🏷️ Discount Created",
+      digest.eventsByType.discount_created,
+      "#10b981" // emerald
+    ));
+  }
+
+  // Discount changed
+  if (digest.eventsByType.discount_changed.length > 0) {
+    sections.push(buildEventSection(
+      "🏷️ Discount Changed",
+      digest.eventsByType.discount_changed,
+      "#f59e0b" // amber
+    ));
+  }
+
+  // Discount deleted
+  if (digest.eventsByType.discount_deleted.length > 0) {
+    sections.push(buildEventSection(
+      "🏷️ Discount Deleted",
+      digest.eventsByType.discount_deleted,
+      "#ef4444" // red
+    ));
+  }
+
   const sectionsHtml = sections.join("");
 
   // Summary stats
@@ -238,6 +265,12 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
       return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
+    case "discount_created":
+      return `Created — ${event.afterValue} • ${time}`;
+    case "discount_changed":
+      return `Modified — ${event.afterValue} • ${time}`;
+    case "discount_deleted":
+      return `Deleted • ${time}`;
     default:
       return `${event.beforeValue} → ${event.afterValue} • ${time}`;
   }
@@ -283,6 +316,12 @@ function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): str
       return `🚨 Out of stock: ${event.resourceName} - ${shopName}`;
     case "theme_publish":
       return `🎨 Theme published: ${event.resourceName} - ${shopName}`;
+    case "discount_created":
+      return `🏷️ Discount created: ${event.resourceName} - ${shopName}`;
+    case "discount_changed":
+      return `🏷️ Discount changed: ${event.resourceName} - ${shopName}`;
+    case "discount_deleted":
+      return `🚨 Discount deleted: ${event.resourceName} - ${shopName}`;
     default:
       return `⚡ Change detected: ${event.resourceName} - ${shopName}`;
   }
@@ -298,6 +337,9 @@ function getAlertIcon(eventType: string): string {
     case "inventory_low": return "⚠️";
     case "inventory_zero": return "🚨";
     case "theme_publish": return "🎨";
+    case "discount_created": return "🏷️";
+    case "discount_changed": return "🏷️";
+    case "discount_deleted": return "🚨";
     default: return "⚡";
   }
 }
@@ -312,6 +354,9 @@ function getAlertColor(eventType: string): string {
     case "inventory_low": return "#f97316";
     case "inventory_zero": return "#ef4444";
     case "theme_publish": return "#06b6d4";
+    case "discount_created": return "#10b981";
+    case "discount_changed": return "#f59e0b";
+    case "discount_deleted": return "#ef4444";
     default: return "#6b7280";
   }
 }
@@ -352,6 +397,15 @@ function generateInstantAlertHtml(
       break;
     case "theme_publish":
       changeDescription = `"${event.resourceName}" is now your live theme`;
+      break;
+    case "discount_created":
+      changeDescription = `Discount "${event.resourceName}" was created — ${event.afterValue || ""}`;
+      break;
+    case "discount_changed":
+      changeDescription = `Discount "${event.resourceName}" was modified — ${event.afterValue || ""}`;
+      break;
+    case "discount_deleted":
+      changeDescription = `Discount "${event.resourceName}" was deleted`;
       break;
     default:
       changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;
