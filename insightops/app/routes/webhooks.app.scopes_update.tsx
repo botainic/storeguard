@@ -1,21 +1,26 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { queueWebhookJob } from "../services/jobQueue.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-    const { payload, session, topic, shop } = await authenticate.webhook(request);
-    console.log(`Received ${topic} webhook for ${shop}`);
+  const webhookId = request.headers.get("X-Shopify-Webhook-Id");
 
-    const current = payload.current as string[];
-    if (session) {
-        await db.session.update({   
-            where: {
-                id: session.id
-            },
-            data: {
-                scope: current.toString(),
-            },
-        });
-    }
+  const { shop, session, topic, payload } =
+    await authenticate.webhook(request);
+
+  console.log(`[StoreGuard] Received ${topic} webhook for ${shop} (ID: ${webhookId})`);
+
+  if (!session) {
     return new Response();
+  }
+
+  await queueWebhookJob({
+    shop,
+    topic,
+    resourceId: shop,
+    payload,
+    webhookId: webhookId || undefined,
+  });
+
+  return new Response();
 };

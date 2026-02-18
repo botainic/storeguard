@@ -11,6 +11,7 @@ import {
   detectInventoryZero,
   detectLowStock,
   deleteProductSnapshot,
+  recordThemePublish,
 } from "./changeDetection.server";
 
 // Full product payload from Shopify webhook
@@ -825,6 +826,109 @@ async function processInventoryUpdate(
 }
 
 /**
+ * Process a theme publish job
+ */
+async function processThemePublish(
+  shop: string,
+  payload: { id: number; name: string; role: string },
+  webhookId: string | null
+): Promise<void> {
+  if (!webhookId) {
+    console.log(`[StoreGuard] No webhookId for theme publish, skipping`);
+    return;
+  }
+
+  const recorded = await recordThemePublish(shop, payload, webhookId);
+  if (recorded) {
+    console.log(`[StoreGuard] Theme publish alert created for "${payload.name}"`);
+  }
+}
+
+/**
+ * Process an order paid job
+ */
+async function processOrderPaid(
+  shop: string,
+  payload: {
+    id: number;
+    name: string;
+    total_price: string;
+    subtotal_price: string;
+    currency: string;
+    financial_status: string;
+    line_items: Array<{
+      title: string;
+      quantity: number;
+      price: string;
+      variant_title: string | null;
+      product_id: number | null;
+    }>;
+    discount_codes: Array<{ code: string; amount: string }>;
+  },
+  webhookId: string | null
+): Promise<void> {
+  const itemCount = payload.line_items.reduce((sum, item) => sum + item.quantity, 0);
+  const firstItem = payload.line_items[0]?.title || "items";
+  const itemSummary = itemCount === 1 ? firstItem : `${itemCount} items`;
+
+  const amount = parseFloat(payload.total_price);
+  const formattedAmount = amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: payload.currency || "USD",
+  });
+
+  const message = `Order ${payload.name} - ${formattedAmount}`;
+
+  const diff = JSON.stringify({
+    orderId: payload.id,
+    orderName: payload.name,
+    total: payload.total_price,
+    subtotal: payload.subtotal_price,
+    currency: payload.currency,
+    status: payload.financial_status,
+    itemCount,
+    itemSummary,
+    items: payload.line_items.map((item) => ({
+      title: item.title,
+      variant: item.variant_title,
+      quantity: item.quantity,
+      price: item.price,
+      productId: item.product_id,
+    })),
+    discounts: payload.discount_codes,
+  });
+
+  await db.eventLog.create({
+    data: {
+      shop,
+      shopifyId: String(payload.id),
+      topic: "ORDERS_CREATE",
+      author: "Customer",
+      message,
+      diff,
+      webhookId,
+    },
+  });
+
+  console.log(`[StoreGuard] Logged: ${message}`);
+}
+
+/**
+ * Process an app scopes update job
+ */
+async function processScopesUpdate(
+  shop: string,
+  sessionId: string,
+  payload: { current: string[] }
+): Promise<void> {
+  await db.session.update({
+    where: { id: sessionId },
+    data: { scope: payload.current.toString() },
+  });
+  console.log(`[StoreGuard] Updated scopes for ${shop}`);
+}
+
+/**
  * Process a single job
  */
 async function processJob(job: {
@@ -866,6 +970,15 @@ async function processJob(job: {
       break;
     case "inventory/levels/update":
       await processInventoryUpdate(job.shop, session.accessToken, payload, job.webhookId);
+      break;
+    case "themes/publish":
+      await processThemePublish(job.shop, payload, job.webhookId);
+      break;
+    case "orders/paid":
+      await processOrderPaid(job.shop, payload, job.webhookId);
+      break;
+    case "app/scopes/update":
+      await processScopesUpdate(job.shop, session.id, payload);
       break;
     default:
       console.log(`[StoreGuard] Unknown topic: ${job.topic} (normalized: ${normalizedTopic})`);

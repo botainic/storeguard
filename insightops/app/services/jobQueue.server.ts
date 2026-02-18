@@ -16,29 +16,40 @@ interface WebhookJobData {
  * Queue a webhook for background processing.
  * Returns immediately so the webhook handler can respond with 200 OK.
  * Automatically schedules job processing after the delay.
+ *
+ * Handles duplicate webhookIds gracefully via unique constraint — returns null if already queued.
  */
-export async function queueWebhookJob(data: WebhookJobData): Promise<string> {
+export async function queueWebhookJob(data: WebhookJobData): Promise<string | null> {
   const processAt = data.delayMs
     ? new Date(Date.now() + data.delayMs)
     : new Date();
 
-  const job = await db.webhookJob.create({
-    data: {
-      shop: data.shop,
-      topic: data.topic,
-      resourceId: data.resourceId,
-      payload: JSON.stringify(data.payload),
-      webhookId: data.webhookId,
-      processAt,
-    },
-  });
+  try {
+    const job = await db.webhookJob.create({
+      data: {
+        shop: data.shop,
+        topic: data.topic,
+        resourceId: data.resourceId,
+        payload: JSON.stringify(data.payload),
+        webhookId: data.webhookId,
+        processAt,
+      },
+    });
 
-  console.log(`[StoreGuard] Queued job ${job.id} for ${data.topic}`);
+    console.log(`[StoreGuard] Queued job ${job.id} for ${data.topic}`);
 
-  // Auto-schedule job processing (fire-and-forget)
-  scheduleJobProcessing(data.delayMs ? data.delayMs + 500 : 500);
+    // Auto-schedule job processing (fire-and-forget)
+    scheduleJobProcessing(data.delayMs ? data.delayMs + 500 : 100);
 
-  return job.id;
+    return job.id;
+  } catch (error: unknown) {
+    // Handle duplicate webhookId (unique constraint violation)
+    if (error instanceof Error && error.message.includes("Unique constraint")) {
+      console.log(`[StoreGuard] Duplicate webhook ${data.webhookId}, already queued`);
+      return null;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -64,19 +75,6 @@ function scheduleJobProcessing(delayMs: number): void {
       processorScheduled = false;
     }
   }, delayMs);
-}
-
-/**
- * Check if a webhook has already been processed (deduplication)
- */
-export async function isWebhookProcessed(webhookId: string): Promise<boolean> {
-  // Check both completed jobs and event logs
-  const [existingJob, existingEvent] = await Promise.all([
-    db.webhookJob.findUnique({ where: { webhookId } }),
-    db.eventLog.findUnique({ where: { webhookId } }),
-  ]);
-
-  return !!(existingJob || existingEvent);
 }
 
 /**
