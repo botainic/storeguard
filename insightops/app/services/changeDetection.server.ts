@@ -8,6 +8,7 @@ import {
   shouldAlertInventoryZero as checkInventoryZero,
   shouldAlertLowStock as checkLowStock,
   formatVariantLabel,
+  isCriticalInstantAlert,
 } from "./changeDetection.utils";
 import { getProductSalesVelocity } from "./salesVelocity.server";
 import { formatVelocityContext, estimateRevenueImpact } from "./salesVelocity.utils";
@@ -126,6 +127,44 @@ async function updateProductSnapshot(
   });
 }
 
+/** Max instant alert emails per shop per hour */
+const INSTANT_ALERT_RATE_LIMIT = 10;
+
+/**
+ * Decide whether to send an instant alert for a change event.
+ * Returns true only when:
+ * 1. The shop has instant alerts enabled (Pro + toggle on + email set)
+ * 2. The event is critical (price drop >50%, out of stock, visibility hidden, domain removed, permissions expanded)
+ * 3. The shop has not exceeded the rate limit (max 10 per hour)
+ */
+export async function shouldSendInstantAlert(
+  shop: string,
+  event: { eventType: string; importance: string; afterValue?: string | null }
+): Promise<boolean> {
+  // 1. Feature gate: Pro plan + instant alerts enabled + email configured
+  const enabled = await hasInstantAlerts(shop);
+  if (!enabled) return false;
+
+  // 2. Severity check: only critical events
+  if (!isCriticalInstantAlert(event)) return false;
+
+  // 3. Rate limit: max 10 instant alert emails per shop per hour
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const recentAlertCount = await db.changeEvent.count({
+    where: {
+      shop,
+      instantAlertSentAt: { not: null, gte: oneHourAgo },
+    },
+  });
+
+  if (recentAlertCount >= INSTANT_ALERT_RATE_LIMIT) {
+    console.log(`[StoreGuard] Rate limit reached for ${shop}: ${recentAlertCount} instant alerts in last hour`);
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Create a ChangeEvent record
  */
@@ -144,6 +183,15 @@ async function createChangeEvent(data: {
   contextData?: string | null;
 }): Promise<void> {
   try {
+    const importance = data.importance ?? "medium";
+
+    // Check instant alert eligibility BEFORE creating the event (for rate limit accuracy)
+    const sendInstant = await shouldSendInstantAlert(data.shop, {
+      eventType: data.eventType,
+      importance,
+      afterValue: data.afterValue,
+    });
+
     const event = await db.changeEvent.create({
       data: {
         shop: data.shop,
@@ -155,16 +203,16 @@ async function createChangeEvent(data: {
         afterValue: data.afterValue,
         webhookId: data.webhookId,
         source: data.source ?? "webhook",
-        importance: data.importance ?? "medium",
+        importance,
         groupId: data.groupId,
         contextData: data.contextData ?? null,
+        instantAlertSentAt: sendInstant ? new Date() : null,
       },
     });
     console.log(`[StoreGuard] Created ${data.eventType} event for "${data.resourceName}"`);
 
-    // Send instant alert if enabled (Pro feature)
-    const shouldSendInstant = await hasInstantAlerts(data.shop);
-    if (shouldSendInstant) {
+    // Send instant alert for critical events only
+    if (sendInstant) {
       const alertEmail = await getShopAlertEmail(data.shop);
       if (alertEmail) {
         // Fire and forget - don't block on email sending
@@ -174,7 +222,7 @@ async function createChangeEvent(data: {
             resourceName: data.resourceName,
             beforeValue: data.beforeValue,
             afterValue: data.afterValue,
-            importance: data.importance ?? "medium",
+            importance,
             detectedAt: event.detectedAt,
             contextData: data.contextData ?? null,
           },

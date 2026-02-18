@@ -74,12 +74,14 @@ model ChangeEvent {
   topic        String?   // Webhook topic e.g. "products/update" (unified from EventLog)
   diff         String?   // JSON snapshot/change data (unified from EventLog)
   author       String?   // Who made the change (from Shopify Events API)
+  instantAlertSentAt DateTime? // When instant alert email was sent (null = not sent)
 
   @@index([shop])
   @@index([shop, detectedAt])
   @@index([shop, eventType])
   @@index([digestedAt])
   @@index([shop, entityType, entityId])
+  @@index([shop, instantAlertSentAt])
 }
 
 // Product state snapshot for change detection
