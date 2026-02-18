@@ -853,34 +853,6 @@ async function processInventoryUpdate(
     return;
   }
 
-  // NOISE FILTER: Skip inventory updates caused by orders
-  // When orders webhook is enabled, this will hide the "symptom" when we already have the "cause"
-  if (productId) {
-    try {
-      const recentOrder = await db.changeEvent.findFirst({
-        where: {
-          shop,
-          topic: "orders/paid",
-          detectedAt: {
-            gte: new Date(Date.now() - 30 * 1000), // Within last 30 seconds
-          },
-        },
-        orderBy: { detectedAt: "desc" },
-      });
-
-      if (recentOrder?.diff) {
-        const orderDiff = JSON.parse(recentOrder.diff);
-        const orderProductIds = orderDiff.items?.map((item: { productId: number }) => String(item.productId)) || [];
-        if (orderProductIds.includes(productId)) {
-          console.log(`[StoreGuard] Skipping inventory update - caused by recent order ${orderDiff.orderName}`);
-          return;
-        }
-      }
-    } catch (filterError) {
-      console.error(`[StoreGuard] Noise filter check failed:`, filterError);
-    }
-  }
-
   // === Multi-location: Fetch total inventory across all locations ===
   const { totalQuantity, locationName } = await fetchTotalInventory(
     shop,
@@ -1074,79 +1046,6 @@ async function processThemePublish(
 }
 
 /**
- * Process an order paid job
- */
-async function processOrderPaid(
-  shop: string,
-  payload: {
-    id: number;
-    name: string;
-    total_price: string;
-    subtotal_price: string;
-    currency: string;
-    financial_status: string;
-    line_items: Array<{
-      title: string;
-      quantity: number;
-      price: string;
-      variant_title: string | null;
-      product_id: number | null;
-    }>;
-    discount_codes: Array<{ code: string; amount: string }>;
-  },
-  webhookId: string | null
-): Promise<void> {
-  const itemCount = payload.line_items.reduce((sum, item) => sum + item.quantity, 0);
-  const firstItem = payload.line_items[0]?.title || "items";
-  const itemSummary = itemCount === 1 ? firstItem : `${itemCount} items`;
-
-  const amount = parseFloat(payload.total_price);
-  const formattedAmount = amount.toLocaleString("en-US", {
-    style: "currency",
-    currency: payload.currency || "USD",
-  });
-
-  const message = `Order ${payload.name} - ${formattedAmount}`;
-
-  const diff = JSON.stringify({
-    orderId: payload.id,
-    orderName: payload.name,
-    total: payload.total_price,
-    subtotal: payload.subtotal_price,
-    currency: payload.currency,
-    status: payload.financial_status,
-    itemCount,
-    itemSummary,
-    items: payload.line_items.map((item) => ({
-      title: item.title,
-      variant: item.variant_title,
-      quantity: item.quantity,
-      price: item.price,
-      productId: item.product_id,
-    })),
-    discounts: payload.discount_codes,
-  });
-
-  await db.changeEvent.create({
-    data: {
-      shop,
-      entityType: "order",
-      entityId: String(payload.id),
-      eventType: "order_paid",
-      resourceName: message,
-      source: "webhook",
-      importance: "low",
-      topic: "orders/paid",
-      author: "Customer",
-      diff,
-      webhookId: webhookId ?? `activity-orders-paid-${payload.id}-${Date.now()}`,
-    },
-  });
-
-  console.log(`[StoreGuard] Logged: ${message}`);
-}
-
-/**
  * Process an app scopes update job
  * Diffs previous vs current scopes and creates ChangeEvent for permission changes
  */
@@ -1237,9 +1136,6 @@ async function processJob(job: {
     case "domains/update":
     case "domains/destroy":
       await processDomain(job.shop, normalizedTopic, payload, job.webhookId);
-      break;
-    case "orders/paid":
-      await processOrderPaid(job.shop, payload, job.webhookId);
       break;
     case "app/scopes/update":
       await processScopesUpdate(job.shop, session.id, payload, job.webhookId);
