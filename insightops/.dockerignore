@@ -4,5 +4,10 @@ node_modules
 .git
 *.md
 .env*
+*.test.ts
+*.test.tsx
+vitest.config.ts
+.ralphy
+.ralphy-sandboxes
 prisma/*.sqlite
 fly.toml
