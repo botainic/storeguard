@@ -102,3 +102,89 @@ export function formatVariantLabel(
   }
   return `${productTitle} - ${variantTitle}`;
 }
+
+// ============================================
+// Multi-Location Inventory Utilities
+// ============================================
+
+export interface LocationInventory {
+  locationId: string;
+  locationName: string;
+  available: number;
+}
+
+export interface MultiLocationResult {
+  totalAvailable: number;
+  locations: LocationInventory[];
+  locationCount: number;
+}
+
+/**
+ * Compute total available inventory across all locations.
+ */
+export function computeTotalInventory(locations: LocationInventory[]): number {
+  return locations.reduce((sum, loc) => sum + loc.available, 0);
+}
+
+/**
+ * Build a human-readable location context string for alerts.
+ * Examples:
+ *  - "Warehouse NYC hit zero, but 45 units remain across 2 other locations"
+ *  - "Completely out of stock across all 3 locations"
+ *  - "Stock low at Warehouse NYC (2 left), 45 units remain across 2 other locations"
+ */
+export function buildLocationContext(
+  triggeringLocationName: string,
+  triggeringLocationAvailable: number,
+  allLocations: LocationInventory[]
+): string {
+  const otherLocations = allLocations.filter(
+    (loc) => loc.locationName !== triggeringLocationName
+  );
+  const totalOther = otherLocations.reduce((sum, loc) => sum + loc.available, 0);
+  const totalAll = triggeringLocationAvailable + totalOther;
+
+  if (totalAll === 0) {
+    if (allLocations.length === 1) {
+      return "Out of stock";
+    }
+    return `Completely out of stock across all ${allLocations.length} locations`;
+  }
+
+  if (triggeringLocationAvailable === 0 && totalOther > 0) {
+    const otherCount = otherLocations.length;
+    const unitWord = totalOther !== 1 ? "units" : "unit";
+    const remainWord = totalOther !== 1 ? "remain" : "remains";
+    return `${triggeringLocationName} hit zero, but ${totalOther} ${unitWord} ${remainWord} across ${otherCount} other location${otherCount !== 1 ? "s" : ""}`;
+  }
+
+  if (totalOther > 0) {
+    const otherCount = otherLocations.length;
+    return `${triggeringLocationName} has ${triggeringLocationAvailable} left, ${totalOther} unit${totalOther !== 1 ? "s" : ""} at ${otherCount} other location${otherCount !== 1 ? "s" : ""}`;
+  }
+
+  return `${triggeringLocationName} has ${triggeringLocationAvailable} left (only location)`;
+}
+
+/**
+ * Determine if an inventory_zero alert should fire considering multi-location.
+ * Only alert when total inventory across ALL locations is zero.
+ */
+export function shouldAlertInventoryZeroMultiLocation(
+  totalAvailable: number,
+  previousTotalAvailable: number | null
+): boolean {
+  return shouldAlertInventoryZero(totalAvailable, previousTotalAvailable);
+}
+
+/**
+ * Determine if an inventory_low alert should fire considering multi-location.
+ * Uses total inventory across ALL locations against the threshold.
+ */
+export function shouldAlertLowStockMultiLocation(
+  totalAvailable: number,
+  previousTotalAvailable: number | null,
+  threshold: number
+): boolean {
+  return shouldAlertLowStock(totalAvailable, previousTotalAvailable, threshold);
+}

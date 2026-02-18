@@ -320,6 +320,9 @@ export async function detectVisibilityChanges(
  * Detect inventory hitting zero
  * Explicit rule: Only triggers on transition >0 → 0
  * Does NOT trigger on: 0 → 0, negative → 0, or any other scenario
+ *
+ * Multi-location aware: newQuantity and previousQuantity should be TOTAL
+ * across all locations. locationContext provides human-readable detail.
  */
 export async function detectInventoryZero(
   shop: string,
@@ -329,7 +332,8 @@ export async function detectInventoryZero(
   variantTitle: string,
   newQuantity: number,
   previousQuantity: number | null, // Must be provided from webhook processing
-  webhookId: string
+  webhookId: string,
+  locationContext?: string
 ): Promise<boolean> {
   // Check if shop wants to track inventory
   if (!await canTrackFeature(shop, "inventory")) {
@@ -357,6 +361,11 @@ export async function detectInventoryZero(
     return false;
   }
 
+  // afterValue includes location context for multi-location stores
+  const afterValue = locationContext
+    ? `0 (${locationContext})`
+    : "0";
+
   await createChangeEvent({
     shop,
     entityType: "variant",
@@ -364,7 +373,7 @@ export async function detectInventoryZero(
     eventType: "inventory_zero",
     resourceName: formatVariantLabel(productTitle, variantTitle),
     beforeValue: String(previousQuantity),
-    afterValue: "0",
+    afterValue,
     webhookId: `${webhookId}-inventory-zero-${inventoryItemId}`,
     importance: "high", // Out of stock is always high importance
   });
@@ -376,6 +385,9 @@ export async function detectInventoryZero(
  * Detect inventory dropping below low stock threshold
  * Triggers when quantity crosses from above threshold to at or below threshold
  * Does NOT trigger on: already below threshold, or at zero (that's inventory_zero)
+ *
+ * Multi-location aware: newQuantity and previousQuantity should be TOTAL
+ * across all locations. locationContext provides human-readable detail.
  */
 export async function detectLowStock(
   shop: string,
@@ -385,7 +397,8 @@ export async function detectLowStock(
   variantTitle: string,
   newQuantity: number,
   previousQuantity: number | null,
-  webhookId: string
+  webhookId: string,
+  locationContext?: string
 ): Promise<boolean> {
   // Get the shop's low stock threshold
   const threshold = await getLowStockThreshold(shop);
@@ -416,6 +429,11 @@ export async function detectLowStock(
 
   const displayName = formatVariantLabel(productTitle, variantTitle);
 
+  // afterValue includes location context for multi-location stores
+  const afterValue = locationContext
+    ? `${newQuantity} (${locationContext})`
+    : String(newQuantity);
+
   await createChangeEvent({
     shop,
     entityType: "variant",
@@ -423,12 +441,12 @@ export async function detectLowStock(
     eventType: "inventory_low",
     resourceName: displayName,
     beforeValue: String(previousQuantity),
-    afterValue: String(newQuantity),
+    afterValue,
     webhookId: `${webhookId}-inventory-low-${inventoryItemId}`,
     importance: "medium", // Low stock is medium importance (zero is high)
   });
 
-  console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} (threshold: ${threshold})`);
+  console.log(`[StoreGuard] Low stock alert: ${displayName} dropped to ${newQuantity} total (threshold: ${threshold})`);
 
   return true;
 }

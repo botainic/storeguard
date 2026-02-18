@@ -235,6 +235,10 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
     case "inventory_low":
       return `Stock dropped to ${event.afterValue} units (was ${event.beforeValue}) • ${time}`;
     case "inventory_zero":
+      // afterValue may contain location context
+      if (event.afterValue && event.afterValue !== "0") {
+        return `${event.afterValue} (was ${event.beforeValue} units) • ${time}`;
+      }
       return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
@@ -345,10 +349,14 @@ function generateInstantAlertHtml(
       changeDescription = `Status changed from ${event.beforeValue} to ${event.afterValue}`;
       break;
     case "inventory_low":
+      // afterValue may contain location context, e.g. "3 (Warehouse NYC has 3 left, 10 units at 2 other locations)"
       changeDescription = `Stock dropped to ${event.afterValue} units (was ${event.beforeValue})`;
       break;
     case "inventory_zero":
-      changeDescription = `Now out of stock (was ${event.beforeValue} units)`;
+      // afterValue may contain location context, e.g. "0 (Warehouse NYC hit zero, but 45 units remain across 2 other locations)"
+      changeDescription = event.afterValue && event.afterValue !== "0"
+        ? `${event.afterValue} (was ${event.beforeValue} units)`
+        : `Now out of stock (was ${event.beforeValue} units)`;
       break;
     case "theme_publish":
       changeDescription = `"${event.resourceName}" is now your live theme`;

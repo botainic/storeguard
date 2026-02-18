@@ -12,6 +12,12 @@ import {
   detectLowStock,
   deleteProductSnapshot,
 } from "./changeDetection.server";
+import {
+  type LocationInventory,
+  type MultiLocationResult,
+  computeTotalInventory,
+  buildLocationContext,
+} from "./changeDetection.utils";
 
 // Full product payload from Shopify webhook
 interface ProductPayload {
@@ -569,11 +575,135 @@ async function processCollection(
 }
 
 /**
+ * Fetch all inventory levels across all locations for an inventory item.
+ * Uses Shopify GraphQL to get a complete picture of multi-location inventory.
+ */
+async function fetchAllLocationInventory(
+  shop: string,
+  accessToken: string,
+  inventoryItemId: number
+): Promise<MultiLocationResult | null> {
+  try {
+    const gql = await fetch(`https://${shop}/admin/api/${apiVersion}/graphql.json`, {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `#graphql
+          query InventoryLevels($inventoryItemId: ID!) {
+            inventoryItem(id: $inventoryItemId) {
+              inventoryLevels(first: 50) {
+                edges {
+                  node {
+                    quantities(names: ["available"]) {
+                      name
+                      quantity
+                    }
+                    location {
+                      id
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+        variables: { inventoryItemId: `gid://shopify/InventoryItem/${inventoryItemId}` },
+      }),
+    });
+
+    const data = (await gql.json()) as any;
+    const edges = data?.data?.inventoryItem?.inventoryLevels?.edges;
+    if (!edges || edges.length === 0) return null;
+
+    const locations: LocationInventory[] = edges.map((edge: any) => {
+      const node = edge.node;
+      const availableQty = node.quantities?.find((q: any) => q.name === "available");
+      return {
+        locationId: node.location.id,
+        locationName: node.location.name,
+        available: availableQty?.quantity ?? 0,
+      };
+    });
+
+    return {
+      totalAvailable: computeTotalInventory(locations),
+      locations,
+      locationCount: locations.length,
+    };
+  } catch (error) {
+    console.error(`[StoreGuard] Failed to fetch multi-location inventory:`, error);
+    return null;
+  }
+}
+
+/**
+ * Get the previous total inventory across all locations for an inventory item.
+ * Stored in EventLog diff as `totalAvailable`.
+ * Falls back to single-location `available` for backwards compatibility.
+ */
+async function getPreviousTotalInventory(
+  shop: string,
+  inventoryItemId: string,
+  productId: string,
+  variantId: string
+): Promise<number | null> {
+  let oldTotal: number | null = null;
+
+  try {
+    const previousEvent = await db.eventLog.findFirst({
+      where: {
+        shop,
+        shopifyId: inventoryItemId,
+        topic: "INVENTORY_LEVELS_UPDATE",
+      },
+      orderBy: { timestamp: "desc" },
+    });
+
+    if (previousEvent?.diff) {
+      const prevDiff = JSON.parse(previousEvent.diff);
+      // Prefer totalAvailable (multi-location aware) over available (single-location)
+      if (prevDiff.totalAvailable !== undefined && prevDiff.totalAvailable !== null) {
+        oldTotal = prevDiff.totalAvailable;
+      } else if (prevDiff.available !== undefined && prevDiff.available !== null) {
+        // Backwards compat: old events before multi-location support
+        oldTotal = prevDiff.available;
+      }
+    }
+
+    // Fall back to ProductSnapshot
+    if (oldTotal === null && productId && variantId) {
+      const snapshot = await db.productSnapshot.findUnique({
+        where: { shop_id: { shop, id: productId } },
+      });
+      if (snapshot?.variants) {
+        try {
+          const variants = JSON.parse(snapshot.variants) as Array<{ id: string; inventoryQuantity: number }>;
+          const matchingVariant = variants.find(v => v.id === variantId);
+          if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
+            oldTotal = matchingVariant.inventoryQuantity;
+            console.log(`[StoreGuard] Got previous inventory ${oldTotal} from ProductSnapshot`);
+          }
+        } catch {
+          // Invalid JSON in snapshot
+        }
+      }
+    }
+  } catch (prevError) {
+    console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
+  }
+
+  return oldTotal;
+}
+
+/**
  * Process an inventory update job
  *
- * NOTE: Once the orders/paid webhook is enabled (requires Protected Customer Data approval),
- * the noise filter below will automatically hide inventory updates caused by orders.
- * Until then, we keep logging inventory updates so the app isn't blind to sales activity.
+ * Multi-location aware: When an inventory_levels/update webhook fires for one location,
+ * we query ALL locations for that inventory item to get the true total sellable quantity.
+ * This prevents false "out of stock" alerts when only one warehouse hits zero.
  */
 async function processInventoryUpdate(
   shop: string,
@@ -670,98 +800,97 @@ async function processInventoryUpdate(
     }
   }
 
-  // Get previous inventory level for diff display AND for >0→0 detection
-  // Strategy: Check EventLog first (most recent), then fall back to ProductSnapshot
-  let oldAvailable: number | null = null;
-  try {
-    // First, try EventLog (recent inventory updates)
-    const previousEvent = await db.eventLog.findFirst({
-      where: {
-        shop,
-        shopifyId: String(payload.inventory_item_id),
-        topic: "INVENTORY_LEVELS_UPDATE",
-      },
-      orderBy: { timestamp: "desc" },
-    });
+  // === Multi-Location Inventory Aggregation ===
+  // Fetch ALL inventory levels across all locations for this item.
+  // The webhook only tells us about ONE location — we need the full picture.
+  let multiLocationData: MultiLocationResult | null = null;
+  let totalAvailable = payload.available; // Fallback to single-location value
+  let locationContext = "";
+  let triggeringLocationName = "";
 
-    if (previousEvent?.diff) {
-      const prevDiff = JSON.parse(previousEvent.diff);
-      oldAvailable = prevDiff.available;
-    }
+  multiLocationData = await fetchAllLocationInventory(shop, accessToken, payload.inventory_item_id);
+  if (multiLocationData && multiLocationData.locationCount > 0) {
+    totalAvailable = multiLocationData.totalAvailable;
 
-    // If no EventLog, fall back to ProductSnapshot
-    if (oldAvailable === null && productId && variantId) {
-      const snapshot = await db.productSnapshot.findUnique({
-        where: { shop_id: { shop, id: productId } },
-      });
-      if (snapshot?.variants) {
-        try {
-          const variants = JSON.parse(snapshot.variants) as Array<{ id: string; inventoryQuantity: number }>;
-          const matchingVariant = variants.find(v => v.id === variantId);
-          if (matchingVariant && matchingVariant.inventoryQuantity !== undefined) {
-            oldAvailable = matchingVariant.inventoryQuantity;
-            console.log(`[StoreGuard] Got previous inventory ${oldAvailable} from ProductSnapshot for ${productTitle}`);
-          }
-        } catch {
-          // Invalid JSON in snapshot
-        }
-      }
-    }
-  } catch (prevError) {
-    console.error(`[StoreGuard] Failed to fetch previous inventory:`, prevError);
+    // Find the triggering location name
+    const triggeringLoc = multiLocationData.locations.find(
+      (loc) => loc.locationId === `gid://shopify/Location/${payload.location_id}`
+    );
+    triggeringLocationName = triggeringLoc?.locationName ?? `Location ${payload.location_id}`;
+
+    locationContext = buildLocationContext(
+      triggeringLocationName,
+      payload.available,
+      multiLocationData.locations
+    );
+
+    console.log(
+      `[StoreGuard] Multi-location inventory for ${productTitle}: ` +
+      `${payload.available} at ${triggeringLocationName}, ` +
+      `${totalAvailable} total across ${multiLocationData.locationCount} locations`
+    );
   }
 
-  // === StoreGuard: Detect inventory changes ===
+  // Get previous TOTAL inventory for transition detection
+  const oldTotalAvailable = await getPreviousTotalInventory(
+    shop,
+    String(payload.inventory_item_id),
+    productId,
+    variantId
+  );
+
+  // === StoreGuard: Detect inventory changes using TOTAL inventory ===
   if (productId && webhookId) {
-    // Detect low stock (crossing below threshold)
+    // Detect low stock (crossing below threshold) — using total across all locations
     const lowStockDetected = await detectLowStock(
       shop,
       String(payload.inventory_item_id),
       productId,
       productTitle,
       variantTitle,
-      payload.available,
-      oldAvailable,
-      webhookId
+      totalAvailable,
+      oldTotalAvailable,
+      webhookId,
+      locationContext || undefined
     );
 
     // Detect inventory hitting zero (only if not already low stock alert)
-    // Rule: Only triggers on >0 → 0 transition
-    if (payload.available === 0 && !lowStockDetected) {
+    // Rule: Only triggers on >0 → 0 transition, using TOTAL inventory
+    if (totalAvailable === 0 && !lowStockDetected) {
       await detectInventoryZero(
         shop,
         String(payload.inventory_item_id),
         productId,
         productTitle,
         variantTitle,
-        payload.available,
-        oldAvailable,
-        webhookId
+        totalAvailable,
+        oldTotalAvailable,
+        webhookId,
+        locationContext || undefined
       );
     }
   }
 
-  // Update or create ProductSnapshot with inventory (keeps snapshot current for future comparisons)
+  // Update or create ProductSnapshot with TOTAL inventory
   if (productId && variantId) {
     try {
       const snapshot = await db.productSnapshot.findUnique({
         where: { shop_id: { shop, id: productId } },
       });
       if (snapshot?.variants) {
-        // Update existing snapshot
+        // Update existing snapshot with total inventory
         const variants = JSON.parse(snapshot.variants) as Array<{ id: string; title: string; price: string; inventoryQuantity: number }>;
         const variantIndex = variants.findIndex(v => v.id === variantId);
         if (variantIndex >= 0) {
-          variants[variantIndex].inventoryQuantity = payload.available;
+          variants[variantIndex].inventoryQuantity = totalAvailable;
           await db.productSnapshot.update({
             where: { shop_id: { shop, id: productId } },
             data: { variants: JSON.stringify(variants) },
           });
-          console.log(`[StoreGuard] Updated ProductSnapshot inventory for ${productTitle}: ${payload.available}`);
+          console.log(`[StoreGuard] Updated ProductSnapshot inventory for ${productTitle}: ${totalAvailable} (total)`);
         }
       } else if (!snapshot) {
         // No snapshot exists - create a minimal one for future tracking
-        // This ensures the NEXT inventory change can be detected
         await db.productSnapshot.create({
           data: {
             id: productId,
@@ -772,7 +901,7 @@ async function processInventoryUpdate(
               id: variantId,
               title: variantTitle || "Default Title",
               price: "0.00",
-              inventoryQuantity: payload.available,
+              inventoryQuantity: totalAvailable,
             }]),
           },
         });
@@ -790,28 +919,37 @@ async function processInventoryUpdate(
 
   // Create a clear message showing stock change
   let message: string;
-  if (oldAvailable !== null && oldAvailable !== payload.available) {
-    const change = payload.available - oldAvailable;
+  if (oldTotalAvailable !== null && oldTotalAvailable !== totalAvailable) {
+    const change = totalAvailable - oldTotalAvailable;
     const arrow = change > 0 ? "↑" : "↓";
-    message = `Stock ${arrow} "${displayName}" (${oldAvailable} → ${payload.available})`;
+    message = `Stock ${arrow} "${displayName}" (${oldTotalAvailable} → ${totalAvailable} total)`;
   } else {
-    message = `Stock updated: "${displayName}" (${payload.available} units)`;
+    message = `Stock updated: "${displayName}" (${totalAvailable} units total)`;
+  }
+
+  // Add location context to message if multi-location
+  if (multiLocationData && multiLocationData.locationCount > 1) {
+    message += ` [${triggeringLocationName}: ${payload.available}]`;
   }
 
   const diff = JSON.stringify({
     available: payload.available,
+    totalAvailable,
     inventoryChange:
-      oldAvailable !== null && oldAvailable !== payload.available
-        ? { old: oldAvailable, new: payload.available }
+      oldTotalAvailable !== null && oldTotalAvailable !== totalAvailable
+        ? { old: oldTotalAvailable, new: totalAvailable }
         : null,
     locationId: payload.location_id,
+    locationName: triggeringLocationName || undefined,
+    locationCount: multiLocationData?.locationCount ?? 1,
+    locations: multiLocationData?.locations ?? undefined,
   });
 
   await db.eventLog.create({
     data: {
       shop,
       // Use inventory_item_id consistently for inventory events
-      // This matches the lookup in getPreviousInventory above
+      // This matches the lookup in getPreviousTotalInventory above
       shopifyId: String(payload.inventory_item_id),
       topic: "INVENTORY_LEVELS_UPDATE",
       author: "System/App",
@@ -821,7 +959,7 @@ async function processInventoryUpdate(
     },
   });
 
-  console.log(`[StoreGuard] ✅ Logged: ${message}`);
+  console.log(`[StoreGuard] Logged: ${message}`);
 }
 
 /**
