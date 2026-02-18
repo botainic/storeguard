@@ -17,6 +17,7 @@ import db from "../db.server";
 import {
   calculateProductVelocity,
   type OrderData,
+  type OrderLineItem,
   type ProductVelocity,
 } from "./salesVelocity.utils";
 
@@ -44,6 +45,10 @@ const ORDERS_QUERY = `#graphql
                 }
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
           }
         }
       }
@@ -55,8 +60,38 @@ const ORDERS_QUERY = `#graphql
   }
 `;
 
+const ORDER_LINE_ITEMS_QUERY = `#graphql
+  query GetOrderLineItems($orderId: ID!, $cursor: String) {
+    order(id: $orderId) {
+      lineItems(first: 50, after: $cursor) {
+        edges {
+          node {
+            product {
+              id
+            }
+            variant {
+              id
+            }
+            quantity
+            originalUnitPriceSet {
+              shopMoney {
+                amount
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
 // Max pages to fetch to prevent runaway pagination
 const MAX_PAGES = 20; // 20 pages * 50 orders = 1000 orders max
+const MAX_LINE_ITEM_PAGES = 10; // 10 pages * 50 items = 500 line items per order
 
 // In-memory cache (lives for the lifetime of a single request/job batch)
 // Key: `${shop}:${periodDays}`, Value: velocity map
@@ -67,14 +102,123 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * Extract numeric ID from Shopify GID.
  * "gid://shopify/Product/12345" -> "12345"
  */
-function extractId(gid: string | null | undefined): string {
+export function extractId(gid: string | null | undefined): string {
   if (!gid) return "";
   const match = gid.match(/\/(\d+)$/);
   return match?.[1] ?? "";
 }
 
+export interface LineItemNode {
+  product: { id: string } | null;
+  variant: { id: string } | null;
+  quantity: number;
+  originalUnitPriceSet: {
+    shopMoney: { amount: string };
+  } | null;
+}
+
+interface LineItemsConnection {
+  edges: Array<{ node: LineItemNode }>;
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
+}
+
+export function parseLineItemNodes(nodes: LineItemNode[]): OrderLineItem[] {
+  return nodes
+    .map((node) => ({
+      productId: extractId(node.product?.id),
+      variantId: extractId(node.variant?.id),
+      quantity: node.quantity,
+      price: parseFloat(
+        node.originalUnitPriceSet?.shopMoney?.amount ?? "0"
+      ),
+    }))
+    .filter((li) => li.productId !== "");
+}
+
+/**
+ * Fetch remaining line items for an order using cursor-based pagination.
+ * Called when the initial lineItems(first: 50) response indicates more pages.
+ */
+async function fetchRemainingLineItems(
+  shop: string,
+  accessToken: string,
+  orderId: string,
+  initialCursor: string
+): Promise<LineItemNode[]> {
+  const additionalNodes: LineItemNode[] = [];
+  let cursor: string | null = initialCursor;
+  let page = 0;
+
+  while (page < MAX_LINE_ITEM_PAGES) {
+    const response = await fetch(
+      `https://${shop}/admin/api/${apiVersion}/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: ORDER_LINE_ITEMS_QUERY,
+          variables: { orderId, cursor },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        `[StoreGuard] Order line items API returned ${response.status} for ${shop} order ${orderId}`
+      );
+      break;
+    }
+
+    const data = (await response.json()) as {
+      data?: {
+        order?: {
+          lineItems: LineItemsConnection;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    if (data.errors?.length) {
+      console.error(
+        `[StoreGuard] Order line items GraphQL errors:`,
+        data.errors.map((e) => e.message).join(", ")
+      );
+      break;
+    }
+
+    const lineItems = data.data?.order?.lineItems;
+    if (!lineItems) break;
+
+    for (const edge of lineItems.edges) {
+      additionalNodes.push(edge.node);
+    }
+
+    if (!lineItems.pageInfo.hasNextPage || !lineItems.pageInfo.endCursor) {
+      break;
+    }
+
+    cursor = lineItems.pageInfo.endCursor;
+    page++;
+  }
+
+  if (page >= MAX_LINE_ITEM_PAGES) {
+    console.warn(
+      `[StoreGuard] Hit max line item page limit (${MAX_LINE_ITEM_PAGES}) for ${shop} order ${orderId}, some line items may be missing`
+    );
+  }
+
+  return additionalNodes;
+}
+
 /**
  * Fetch orders from Shopify using cursor-based pagination with date-range filtering.
+ * Line items within each order are also paginated if they exceed 50 items.
  * Returns normalized OrderData array.
  */
 async function fetchOrders(
@@ -119,18 +263,7 @@ async function fetchOrders(
             node: {
               id: string;
               createdAt: string;
-              lineItems: {
-                edges: Array<{
-                  node: {
-                    product: { id: string } | null;
-                    variant: { id: string } | null;
-                    quantity: number;
-                    originalUnitPriceSet: {
-                      shopMoney: { amount: string };
-                    } | null;
-                  };
-                }>;
-              };
+              lineItems: LineItemsConnection;
             };
           }>;
           pageInfo: {
@@ -153,16 +286,25 @@ async function fetchOrders(
     const edges = data.data?.orders?.edges ?? [];
 
     for (const edge of edges) {
-      const lineItems = edge.node.lineItems.edges
-        .map((li) => ({
-          productId: extractId(li.node.product?.id),
-          variantId: extractId(li.node.variant?.id),
-          quantity: li.node.quantity,
-          price: parseFloat(
-            li.node.originalUnitPriceSet?.shopMoney?.amount ?? "0"
-          ),
-        }))
-        .filter((li) => li.productId !== "");
+      const allNodes: LineItemNode[] = edge.node.lineItems.edges.map((e) => e.node);
+
+      // Paginate remaining line items if the first page was truncated
+      const liPageInfo = edge.node.lineItems.pageInfo;
+      if (liPageInfo.hasNextPage && liPageInfo.endCursor) {
+        console.warn(
+          `[StoreGuard] Order ${edge.node.id} has more than 50 line items for ${shop}, fetching additional pages`
+        );
+
+        const remaining = await fetchRemainingLineItems(
+          shop,
+          accessToken,
+          edge.node.id,
+          liPageInfo.endCursor
+        );
+        allNodes.push(...remaining);
+      }
+
+      const lineItems = parseLineItemNodes(allNodes);
 
       if (lineItems.length > 0) {
         orders.push({
