@@ -41,6 +41,7 @@ model Shop {
   trackVisibility Boolean   @default(true)
   trackInventory  Boolean   @default(true)
   trackThemes     Boolean   @default(false) // Pro only
+  trackCollections Boolean  @default(true) // Free + Pro
   lowStockThreshold Int     @default(5) // Alert when inventory drops below this
   instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
   installedAt     DateTime  @default(now())

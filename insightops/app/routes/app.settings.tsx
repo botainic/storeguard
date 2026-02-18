@@ -28,6 +28,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   const trackVisibility = formData.get("trackVisibility") === "on";
   const trackInventory = formData.get("trackInventory") === "on";
   const trackThemes = formData.get("trackThemes") === "on";
+  const trackCollections = formData.get("trackCollections") === "on";
   const lowStockThreshold = parseInt(formData.get("lowStockThreshold") as string) || 5;
   const instantAlerts = formData.get("instantAlerts") === "on";
 
@@ -50,6 +51,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
       trackVisibility,
       trackInventory,
       trackThemes,
+      trackCollections,
       lowStockThreshold,
       instantAlerts,
     });
@@ -200,6 +202,12 @@ export default function Settings() {
               </label>
             </div>
           )}
+          <Toggle
+            name="trackCollections"
+            label="Collection changes"
+            description="Track when collections are created, updated, or deleted"
+            defaultChecked={settings.trackCollections}
+          />
           <Toggle
             name="trackThemes"
             label="Theme publishes"

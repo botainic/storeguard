@@ -127,6 +127,20 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
     ));
   }
 
+  // Collection changes (combine all collection event types into one section)
+  const collectionEvents = [
+    ...digest.eventsByType.collection_created,
+    ...digest.eventsByType.collection_products_changed,
+    ...digest.eventsByType.collection_deleted,
+  ];
+  if (collectionEvents.length > 0) {
+    sections.push(buildEventSection(
+      "📁 Collection Changes",
+      collectionEvents,
+      "#10b981" // emerald
+    ));
+  }
+
   const sectionsHtml = sections.join("");
 
   // Summary stats
@@ -238,6 +252,12 @@ function formatChangeDescription(event: DigestSummary["eventsByType"]["price_cha
       return `Now out of stock (was ${event.beforeValue} units) • ${time}`;
     case "theme_publish":
       return `Now your live theme • ${time}`;
+    case "collection_created":
+      return `New collection created (${event.afterValue}) • ${time}`;
+    case "collection_products_changed":
+      return `Collection was updated • ${time}`;
+    case "collection_deleted":
+      return `Collection was deleted • ${time}`;
     default:
       return `${event.beforeValue} → ${event.afterValue} • ${time}`;
   }
@@ -283,6 +303,12 @@ function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): str
       return `🚨 Out of stock: ${event.resourceName} - ${shopName}`;
     case "theme_publish":
       return `🎨 Theme published: ${event.resourceName} - ${shopName}`;
+    case "collection_created":
+      return `📁 Collection created: ${event.resourceName} - ${shopName}`;
+    case "collection_products_changed":
+      return `📁 Collection changed: ${event.resourceName} - ${shopName}`;
+    case "collection_deleted":
+      return `🚨 Collection deleted: ${event.resourceName} - ${shopName}`;
     default:
       return `⚡ Change detected: ${event.resourceName} - ${shopName}`;
   }
@@ -298,6 +324,9 @@ function getAlertIcon(eventType: string): string {
     case "inventory_low": return "⚠️";
     case "inventory_zero": return "🚨";
     case "theme_publish": return "🎨";
+    case "collection_created": return "📁";
+    case "collection_products_changed": return "📁";
+    case "collection_deleted": return "🚨";
     default: return "⚡";
   }
 }
@@ -312,6 +341,9 @@ function getAlertColor(eventType: string): string {
     case "inventory_low": return "#f97316";
     case "inventory_zero": return "#ef4444";
     case "theme_publish": return "#06b6d4";
+    case "collection_created": return "#10b981";
+    case "collection_products_changed": return "#10b981";
+    case "collection_deleted": return "#ef4444";
     default: return "#6b7280";
   }
 }
@@ -352,6 +384,15 @@ function generateInstantAlertHtml(
       break;
     case "theme_publish":
       changeDescription = `"${event.resourceName}" is now your live theme`;
+      break;
+    case "collection_created":
+      changeDescription = `New collection "${event.resourceName}" was created (${event.afterValue})`;
+      break;
+    case "collection_products_changed":
+      changeDescription = `Collection "${event.resourceName}" was updated`;
+      break;
+    case "collection_deleted":
+      changeDescription = `Collection "${event.resourceName}" was deleted — this may break storefront links`;
       break;
     default:
       changeDescription = `${event.beforeValue || ""} → ${event.afterValue || ""}`;

@@ -41,6 +41,9 @@ const eventConfig: Record<string, { label: string; color: string }> = {
   inventory_low: { label: "Low Stock", color: "#f97316" },
   inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
   theme_publish: { label: "Theme Published", color: "#3498db" },
+  collection_created: { label: "Collection Created", color: "#10b981" },
+  collection_products_changed: { label: "Collection Changed", color: "#10b981" },
+  collection_deleted: { label: "Collection Deleted", color: "#e74c3c" },
 };
 
 const importanceConfig: Record<string, { label: string; color: string }> = {

@@ -11,6 +11,9 @@ import {
   detectInventoryZero,
   detectLowStock,
   deleteProductSnapshot,
+  recordCollectionCreated,
+  recordCollectionUpdated,
+  recordCollectionDeleted,
 } from "./changeDetection.server";
 
 // Full product payload from Shopify webhook
@@ -533,6 +536,11 @@ async function processCollection(
     const displayName = title || `Collection #${collectionId}`;
     const message = `Collection deleted: "${displayName}"`;
 
+    // === StoreGuard: Create ChangeEvent for collection delete ===
+    if (webhookId) {
+      await recordCollectionDeleted(shop, collectionId, displayName, webhookId);
+    }
+
     await db.eventLog.create({
       data: {
         shop,
@@ -552,6 +560,15 @@ async function processCollection(
   const collection = payload as CollectionPayload;
   const author = (await fetchAuthor(shop, accessToken, "Collection", collection.id, verb)) || "System/App";
   const message = `${author} ${verb}d collection "${collection.title}"`;
+
+  // === StoreGuard: Create ChangeEvent for collection create/update ===
+  if (webhookId) {
+    if (verb === "create") {
+      await recordCollectionCreated(shop, collection, webhookId);
+    } else if (verb === "update") {
+      await recordCollectionUpdated(shop, collection, webhookId);
+    }
+  }
 
   await db.eventLog.create({
     data: {

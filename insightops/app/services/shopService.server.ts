@@ -7,6 +7,7 @@ export interface ShopSettings {
   trackVisibility: boolean;
   trackInventory: boolean;
   trackThemes: boolean;
+  trackCollections: boolean;
   lowStockThreshold: number;
   instantAlerts: boolean;
 }
@@ -27,6 +28,7 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
       trackVisibility: true,
       trackInventory: true,
       trackThemes: false, // Pro only by default
+      trackCollections: true,
       installedAt: new Date(),
     },
     update: {
@@ -44,6 +46,7 @@ export async function getOrCreateShop(shopDomain: string): Promise<ShopSettings>
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackCollections: shop.trackCollections,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -67,6 +70,7 @@ export async function getShopSettings(shopDomain: string): Promise<ShopSettings 
     trackVisibility: shop.trackVisibility,
     trackInventory: shop.trackInventory,
     trackThemes: shop.trackThemes,
+    trackCollections: shop.trackCollections,
     lowStockThreshold: shop.lowStockThreshold,
     instantAlerts: shop.instantAlerts,
   };
@@ -115,6 +119,7 @@ export async function updateShopSettings(
       trackVisibility: settings.trackVisibility ?? shop.trackVisibility,
       trackInventory: settings.trackInventory ?? shop.trackInventory,
       trackThemes,
+      trackCollections: settings.trackCollections ?? shop.trackCollections,
       lowStockThreshold,
       instantAlerts,
     },
@@ -129,6 +134,7 @@ export async function updateShopSettings(
     trackVisibility: updated.trackVisibility,
     trackInventory: updated.trackInventory,
     trackThemes: updated.trackThemes,
+    trackCollections: updated.trackCollections,
     lowStockThreshold: updated.lowStockThreshold,
     instantAlerts: updated.instantAlerts,
   };
@@ -195,7 +201,7 @@ export async function isProPlan(shopDomain: string): Promise<boolean> {
  */
 export async function canTrackFeature(
   shopDomain: string,
-  feature: "prices" | "visibility" | "inventory" | "themes"
+  feature: "prices" | "visibility" | "inventory" | "themes" | "collections"
 ): Promise<boolean> {
   const shop = await db.shop.findUnique({
     where: { shopifyDomain: shopDomain },
@@ -212,6 +218,8 @@ export async function canTrackFeature(
       return shop.trackInventory;
     case "themes":
       return shop.plan === "pro" && shop.trackThemes;
+    case "collections":
+      return shop.trackCollections;
     default:
       return false;
   }

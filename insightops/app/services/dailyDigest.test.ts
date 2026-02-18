@@ -37,6 +37,9 @@ function makeDigest(overrides: Partial<DigestSummary> = {}): DigestSummary {
       inventory_low: [],
       inventory_zero: [],
       theme_publish: [],
+      collection_created: [],
+      collection_products_changed: [],
+      collection_deleted: [],
     },
     ...overrides,
   };
@@ -56,16 +59,21 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [makeEvent({ id: "iz-1" })],
         theme_publish: [makeEvent({ id: "tp-1" })],
+        collection_created: [makeEvent({ id: "cc-1" })],
+        collection_products_changed: [],
+        collection_deleted: [makeEvent({ id: "cd-1" })],
       },
     });
 
     const ids = getEventIdsFromDigest(digest);
-    expect(ids).toHaveLength(5);
+    expect(ids).toHaveLength(7);
     expect(ids).toContain("pc-1");
     expect(ids).toContain("pc-2");
     expect(ids).toContain("vc-1");
     expect(ids).toContain("iz-1");
     expect(ids).toContain("tp-1");
+    expect(ids).toContain("cc-1");
+    expect(ids).toContain("cd-1");
   });
 
   it("should handle digest with events in only one category", () => {
@@ -76,6 +84,9 @@ describe("getEventIdsFromDigest", () => {
         inventory_low: [],
         inventory_zero: [],
         theme_publish: [],
+        collection_created: [],
+        collection_products_changed: [],
+        collection_deleted: [],
       },
     });
 
@@ -102,6 +113,18 @@ describe("formatEventType", () => {
 
   it("should format theme_publish", () => {
     expect(formatEventType("theme_publish")).toBe("Theme Published");
+  });
+
+  it("should format collection_created", () => {
+    expect(formatEventType("collection_created")).toBe("Collection Created");
+  });
+
+  it("should format collection_products_changed", () => {
+    expect(formatEventType("collection_products_changed")).toBe("Collection Changed");
+  });
+
+  it("should format collection_deleted", () => {
+    expect(formatEventType("collection_deleted")).toBe("Collection Deleted");
   });
 
   it("should return raw event type for unknown types", () => {
@@ -180,5 +203,48 @@ describe("formatEventForEmail", () => {
     const result = formatEventForEmail(event);
     expect(result).toContain("Dawn 2.0");
     expect(result).toContain("live theme");
+  });
+
+  it("should format collection created event", () => {
+    const event = makeEvent({
+      eventType: "collection_created",
+      entityType: "collection",
+      resourceName: "Summer Sale",
+      beforeValue: null,
+      afterValue: "manual",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Summer Sale");
+    expect(result).toContain("created");
+    expect(result).toContain("manual");
+  });
+
+  it("should format collection products changed event", () => {
+    const event = makeEvent({
+      eventType: "collection_products_changed",
+      entityType: "collection",
+      resourceName: "Featured",
+      beforeValue: null,
+      afterValue: "updated (manual)",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Featured");
+    expect(result).toContain("updated");
+  });
+
+  it("should format collection deleted event", () => {
+    const event = makeEvent({
+      eventType: "collection_deleted",
+      entityType: "collection",
+      resourceName: "Winter Clearance",
+      beforeValue: "Winter Clearance",
+      afterValue: "deleted",
+    });
+
+    const result = formatEventForEmail(event);
+    expect(result).toContain("Winter Clearance");
+    expect(result).toContain("deleted");
   });
 });

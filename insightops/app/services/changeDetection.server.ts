@@ -48,6 +48,17 @@ interface ThemePayload {
   role: string;
 }
 
+// Collection payload from webhook
+interface CollectionPayload {
+  id: number;
+  title: string;
+  handle: string;
+  body_html: string | null;
+  published_scope: string;
+  sort_order: string;
+  collection_type?: string; // "smart" or "custom" (manual)
+}
+
 /**
  * Get or create a ProductSnapshot for comparison
  */
@@ -104,9 +115,9 @@ async function updateProductSnapshot(
  */
 async function createChangeEvent(data: {
   shop: string;
-  entityType: "product" | "variant" | "theme";
+  entityType: "product" | "variant" | "theme" | "collection";
   entityId: string;
-  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish";
+  eventType: "price_change" | "visibility_change" | "inventory_low" | "inventory_zero" | "theme_publish" | "collection_created" | "collection_products_changed" | "collection_deleted";
   resourceName: string;
   beforeValue: string | null;
   afterValue: string | null;
@@ -466,6 +477,93 @@ export async function recordThemePublish(
     afterValue: "main",
     webhookId: `${webhookId}-theme`,
     importance: "high", // Theme publish is always important
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection created event
+ */
+export async function recordCollectionCreated(
+  shop: string,
+  collection: CollectionPayload,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  const collectionType = collection.collection_type === "smart" ? "smart" : "manual";
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: String(collection.id),
+    eventType: "collection_created",
+    resourceName: collection.title,
+    beforeValue: null,
+    afterValue: collectionType,
+    webhookId: `${webhookId}-collection-created`,
+    importance: "medium",
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection update event (products changed, rules changed, etc.)
+ */
+export async function recordCollectionUpdated(
+  shop: string,
+  collection: CollectionPayload,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  const collectionType = collection.collection_type === "smart" ? "smart" : "manual";
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: String(collection.id),
+    eventType: "collection_products_changed",
+    resourceName: collection.title,
+    beforeValue: null,
+    afterValue: `updated (${collectionType})`,
+    webhookId: `${webhookId}-collection-updated`,
+    importance: "medium",
+  });
+
+  return true;
+}
+
+/**
+ * Record a collection deleted event
+ * Deletion is high importance because it can break storefront links
+ */
+export async function recordCollectionDeleted(
+  shop: string,
+  collectionId: string,
+  collectionTitle: string,
+  webhookId: string
+): Promise<boolean> {
+  if (!await canTrackFeature(shop, "collections")) {
+    return false;
+  }
+
+  await createChangeEvent({
+    shop,
+    entityType: "collection",
+    entityId: collectionId,
+    eventType: "collection_deleted",
+    resourceName: collectionTitle,
+    beforeValue: collectionTitle,
+    afterValue: "deleted",
+    webhookId: `${webhookId}-collection-deleted`,
+    importance: "high", // Deletions break storefront links
   });
 
   return true;
