@@ -246,7 +246,7 @@ async function createChangeEvent(data: {
     }
   } catch (error: unknown) {
     // Handle duplicate webhookId (already processed)
-    if (error instanceof Error && error.message.includes("Unique constraint")) {
+    if ((error as any)?.code === "P2002") {
       console.log(`[StoreGuard] Duplicate event for webhookId ${data.webhookId}, skipping`);
       return;
     }
