@@ -8,6 +8,7 @@ EXPOSE 3000
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV SHOPIFY_APP_URL=https://storeguard-app.onrender.com
 
 # Copy package files
 COPY package.json package-lock.json* ./
