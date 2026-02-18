@@ -22,6 +22,10 @@ import {
   recordDomainChanged,
   recordDomainRemoved,
 } from "./changeDetection.server";
+import {
+  aggregateInventoryLevels,
+  type InventoryLevelNode,
+} from "./changeDetection.utils";
 
 // Full product payload from Shopify webhook
 interface ProductPayload {
@@ -690,8 +694,15 @@ async function processDomain(
   console.log(`[StoreGuard] Domain changed: "${domainHost}"`);
 }
 
+/** Shape of the inventoryLevels connection from the GraphQL response */
+interface InventoryLevelsConnection {
+  nodes: InventoryLevelNode[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+}
+
 /**
  * Fetch total inventory across all locations for an inventory item.
+ * Uses cursor-based pagination to handle merchants with >50 locations.
  * Returns { totalQuantity, locationName } where totalQuantity is the sum
  * of available quantities across all locations, and locationName is the
  * name of the location that triggered this webhook.
@@ -702,56 +713,67 @@ async function fetchTotalInventory(
   inventoryItemId: number,
   triggerLocationId: number
 ): Promise<{ totalQuantity: number; locationName: string | null }> {
+  const allNodes: InventoryLevelNode[] = [];
+  let cursor: string | null = null;
+  const MAX_PAGES = 20; // Safety limit to prevent infinite loops
+
   try {
-    const gql = await fetch(`https://${shop}/admin/api/${apiVersion}/graphql.json`, {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: `#graphql
-          query InventoryLevels($inventoryItemId: ID!) {
-            inventoryItem(id: $inventoryItemId) {
-              inventoryLevels(first: 50) {
-                nodes {
-                  quantities(names: ["available"]) {
-                    quantity
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const gql = await fetch(`https://${shop}/admin/api/${apiVersion}/graphql.json`, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `#graphql
+            query InventoryLevels($inventoryItemId: ID!, $cursor: String) {
+              inventoryItem(id: $inventoryItemId) {
+                inventoryLevels(first: 50, after: $cursor) {
+                  nodes {
+                    quantities(names: ["available"]) {
+                      quantity
+                    }
+                    location {
+                      id
+                      name
+                    }
                   }
-                  location {
-                    id
-                    name
+                  pageInfo {
+                    hasNextPage
+                    endCursor
                   }
                 }
               }
-            }
-          }`,
-        variables: { inventoryItemId: `gid://shopify/InventoryItem/${inventoryItemId}` },
-      }),
-    });
+            }`,
+          variables: {
+            inventoryItemId: `gid://shopify/InventoryItem/${inventoryItemId}`,
+            cursor,
+          },
+        }),
+      });
 
-    const data = (await gql.json()) as any;
-    const levels = data?.data?.inventoryItem?.inventoryLevels?.nodes;
-    if (!levels || levels.length === 0) {
+      const data = (await gql.json()) as {
+        data?: { inventoryItem?: { inventoryLevels?: InventoryLevelsConnection } };
+      };
+      const connection = data?.data?.inventoryItem?.inventoryLevels;
+      if (!connection?.nodes || connection.nodes.length === 0) {
+        break;
+      }
+
+      allNodes.push(...connection.nodes);
+
+      if (!connection.pageInfo.hasNextPage || !connection.pageInfo.endCursor) {
+        break;
+      }
+      cursor = connection.pageInfo.endCursor;
+    }
+
+    if (allNodes.length === 0) {
       return { totalQuantity: 0, locationName: null };
     }
 
-    let totalQuantity = 0;
-    let locationName: string | null = null;
-
-    for (const level of levels) {
-      const qty = level.quantities?.[0]?.quantity ?? 0;
-      totalQuantity += qty;
-
-      // Identify the triggering location
-      const locGid: string = level.location?.id ?? "";
-      const locMatch = locGid.match(/\/Location\/(\d+)$/);
-      if (locMatch?.[1] === String(triggerLocationId)) {
-        locationName = level.location?.name ?? null;
-      }
-    }
-
-    return { totalQuantity, locationName };
+    return aggregateInventoryLevels(allNodes, triggerLocationId);
   } catch (error) {
     console.error(`[StoreGuard] Failed to fetch total inventory:`, error);
     return { totalQuantity: 0, locationName: null };

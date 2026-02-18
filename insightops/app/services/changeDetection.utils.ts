@@ -102,3 +102,35 @@ export function formatVariantLabel(
   }
   return `${productTitle} - ${variantTitle}`;
 }
+
+/** Shape of each inventory level node returned by Shopify GraphQL */
+export interface InventoryLevelNode {
+  quantities: Array<{ quantity: number }>;
+  location: { id: string; name: string } | null;
+}
+
+/**
+ * Aggregate inventory level nodes into a total quantity and trigger location name.
+ * Used by fetchTotalInventory after paginating through all inventory levels.
+ */
+export function aggregateInventoryLevels(
+  nodes: InventoryLevelNode[],
+  triggerLocationId: number
+): { totalQuantity: number; locationName: string | null } {
+  let totalQuantity = 0;
+  let locationName: string | null = null;
+
+  for (const level of nodes) {
+    const qty = level.quantities?.[0]?.quantity ?? 0;
+    totalQuantity += qty;
+
+    // Identify the triggering location
+    const locGid: string = level.location?.id ?? "";
+    const locMatch = locGid.match(/\/Location\/(\d+)$/);
+    if (locMatch?.[1] === String(triggerLocationId)) {
+      locationName = level.location?.name ?? null;
+    }
+  }
+
+  return { totalQuantity, locationName };
+}
