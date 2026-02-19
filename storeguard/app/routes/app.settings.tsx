@@ -41,9 +41,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { settings: { ...settings, plan }, subscription, shop: session.shop };
 };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse> => {
-  const { session } = await authenticate.admin(request);
+export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse | never> => {
+  const { session, billing } = await authenticate.admin(request);
   const formData = await request.formData();
+
+  // Handle billing upgrade request
+  const intent = formData.get("intent");
+  if (intent === "upgrade") {
+    await billing.request({
+      plan: PRO_MONTHLY_PLAN,
+      isTest: process.env.NODE_ENV !== "production",
+    });
+    // billing.request() throws a redirect — never reaches here
+    return { success: false, message: "Unexpected billing state" };
+  }
 
   const alertEmail = formData.get("alertEmail") as string | null;
   const trackPrices = formData.get("trackPrices") === "on";
@@ -297,7 +308,8 @@ export default function Settings() {
           )}
 
           {settings.plan === "free" ? (
-            <Form method="post" action="/api/billing/checkout">
+            <Form method="post">
+              <input type="hidden" name="intent" value="upgrade" />
               <button
                 type="submit"
                 style={{
