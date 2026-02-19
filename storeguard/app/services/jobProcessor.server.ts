@@ -1020,6 +1020,8 @@ async function processInventoryUpdate(
       entityId: String(payload.inventory_item_id),
       eventType: "inventory_update",
       resourceName: displayName,
+      beforeValue: oldAvailable !== null ? String(oldAvailable) : null,
+      afterValue: String(totalQuantity),
       source: "webhook",
       importance: "low",
       topic: "inventory/levels/update",
