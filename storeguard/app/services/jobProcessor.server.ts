@@ -346,9 +346,11 @@ async function processProductUpdate(
 ): Promise<void> {
   // === StoreGuard Change Detection ===
   // Detect price and visibility changes, create ChangeEvent records
+  let hasSpecificChanges = false;
   if (webhookId) {
     const { priceChanges, statusChange } = await processProductChanges(shop, payload, webhookId);
-    if (priceChanges > 0 || statusChange) {
+    hasSpecificChanges = priceChanges > 0 || statusChange;
+    if (hasSpecificChanges) {
       console.log(`[StoreGuard] Detected ${priceChanges} price changes, status change: ${statusChange}`);
     }
   }
@@ -412,22 +414,25 @@ async function processProductUpdate(
     update: { title: payload.title },
   });
 
-  // Create activity log entry
-  await db.changeEvent.create({
-    data: {
-      shop,
-      entityType: "product",
-      entityId: String(payload.id),
-      eventType: "product_updated",
-      resourceName: payload.title,
-      source: "webhook",
-      importance: "low",
-      topic: "products/update",
-      author,
-      diff,
-      webhookId: webhookId ?? `activity-products-update-${payload.id}-${Date.now()}`,
-    },
-  });
+  // Only create generic product_updated event if no specific changes were detected
+  // (price_change and visibility_change events are already created by processProductChanges)
+  if (!hasSpecificChanges) {
+    await db.changeEvent.create({
+      data: {
+        shop,
+        entityType: "product",
+        entityId: String(payload.id),
+        eventType: "product_updated",
+        resourceName: payload.title,
+        source: "webhook",
+        importance: "low",
+        topic: "products/update",
+        author,
+        diff,
+        webhookId: webhookId ?? `activity-products-update-${payload.id}-${Date.now()}`,
+      },
+    });
+  }
 
   console.log(`[StoreGuard] Logged: ${message}`);
 }

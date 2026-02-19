@@ -37,8 +37,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 // Event type display config
 const eventConfig: Record<string, { label: string; color: string }> = {
+  product_updated: { label: "Product Updated", color: "#6b7280" },
+  product_created: { label: "Product Created", color: "#10b981" },
+  product_deleted: { label: "Product Deleted", color: "#e74c3c" },
+  product_snapshot: { label: "Product Snapshot", color: "#6b7280" },
   price_change: { label: "Price Change", color: "#ffa500" },
-  visibility_change: { label: "Visibility", color: "#9b59b6" },
+  visibility_change: { label: "Visibility Change", color: "#9b59b6" },
   inventory_low: { label: "Low Stock", color: "#f97316" },
   inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
   theme_publish: { label: "Theme Published", color: "#3498db" },
