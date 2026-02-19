@@ -48,11 +48,19 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   // Handle billing upgrade request
   const intent = formData.get("intent");
   if (intent === "upgrade") {
-    await billing.request({
-      plan: PRO_MONTHLY_PLAN,
-      isTest: process.env.NODE_ENV !== "production",
-    });
-    // billing.request() throws a redirect — never reaches here
+    try {
+      await billing.request({
+        plan: PRO_MONTHLY_PLAN,
+        isTest: process.env.NODE_ENV !== "production",
+      });
+    } catch (error) {
+      // billing.request() throws a Response (redirect) — let it through
+      if (error instanceof Response) {
+        throw error;
+      }
+      console.error("[StoreGuard] Billing request error:", error);
+      return { success: false, message: error instanceof Error ? error.message : "Billing error" };
+    }
     return { success: false, message: "Unexpected billing state" };
   }
 
