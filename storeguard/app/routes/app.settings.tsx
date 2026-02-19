@@ -126,26 +126,17 @@ export default function Settings() {
     setBillingError(null);
     try {
       const url = action ? `/api/billing/checkout?action=${action}` : "/api/billing/checkout";
-      const response = await fetch(url, { method: "POST", redirect: "manual" });
-      
-      // Shopify billing returns a redirect to the payment page
-      if (response.type === "opaqueredirect" || response.status === 0) {
-        // The redirect was handled by the browser
-        return;
-      }
-      
-      if (response.status >= 300 && response.status < 400) {
-        const redirectUrl = response.headers.get("location");
-        if (redirectUrl) {
-          window.open(redirectUrl, "_top");
-          return;
-        }
-      }
-
+      const response = await fetch(url, { method: "POST" });
       const data = await response.json();
+      
       if (data.error) {
         setBillingError(data.error);
         setBillingLoading(false);
+        return;
+      }
+      if (data.redirectUrl) {
+        // Navigate the top frame to Shopify's billing confirmation page
+        window.open(data.redirectUrl, "_top");
         return;
       }
       if (data.success) {
@@ -154,7 +145,7 @@ export default function Settings() {
         return;
       }
     } catch {
-      // Redirect responses may throw — that's expected with Shopify billing
+      setBillingError("Failed to connect to billing. Please try again.");
       setBillingLoading(false);
     }
   };

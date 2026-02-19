@@ -17,7 +17,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     if (actionParam === "cancel") {
-      // Get current subscription to cancel
       const { appSubscriptions } = await billing.check({
         plans: [PRO_MONTHLY_PLAN],
       });
@@ -33,19 +32,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return Response.json({ error: "No active subscription" }, { status: 400 });
     }
 
-    // Default: Request Pro subscription
-    // billing.request() throws a redirect Response to Shopify's payment page
-    // After merchant approves, Shopify redirects back to the app
+    // billing.request() throws a redirect Response to Shopify's payment confirmation page
+    // We catch it and return the URL as JSON so the frontend can navigate via _top
     await billing.request({
       plan: PRO_MONTHLY_PLAN,
       isTest: process.env.NODE_ENV !== "production",
     });
 
-    // billing.request() never returns — it throws a redirect
-    // This line is only reached if something unexpected happens
+    // Never reached — billing.request() always throws
     return Response.json({ error: "Unexpected billing state" }, { status: 500 });
   } catch (error) {
-    // billing.request() throws a Response (redirect) — let it through
+    // billing.request() throws a Response (redirect) — extract the URL and return as JSON
+    if (error instanceof Response && (error.status === 301 || error.status === 302 || error.status === 303 || error.status === 307 || error.status === 308)) {
+      const redirectUrl = error.headers.get("location");
+      if (redirectUrl) {
+        return Response.json({ redirectUrl });
+      }
+    }
+
+    // Re-throw if it's some other Response
     if (error instanceof Response) {
       throw error;
     }
