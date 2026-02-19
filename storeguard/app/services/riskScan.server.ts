@@ -13,6 +13,8 @@ export interface RiskScanResult {
     variantTitle: string;
     quantity: number;
   }[];
+  zeroPriceProducts: { id: string; title: string; variantCount: number }[];
+  lowPriceProducts: { id: string; title: string; variantCount: number }[];
   highDiscounts: { id: string; title: string; value: string; type: string }[];
 
   // Recent activity
@@ -173,6 +175,56 @@ export async function runRiskScan(
     variantTitle: v.title,
     quantity: v.inventoryQuantity,
   }));
+
+  // Zero price: variants with price = "0" or "0.00", grouped by product
+  const zeroPriceVariants = await db.variantSnapshot.findMany({
+    where: { shop, price: { in: ["0", "0.00", "0.0"] } },
+    include: { productSnapshot: { select: { title: true } } },
+  });
+
+  const zeroByProductPrice = new Map<
+    string,
+    { id: string; title: string; variantCount: number }
+  >();
+  for (const v of zeroPriceVariants) {
+    const existing = zeroByProductPrice.get(v.productSnapshotId);
+    if (existing) {
+      existing.variantCount++;
+    } else {
+      zeroByProductPrice.set(v.productSnapshotId, {
+        id: v.productSnapshotId,
+        title: v.productSnapshot.title,
+        variantCount: 1,
+      });
+    }
+  }
+  const zeroPriceProducts = Array.from(zeroByProductPrice.values());
+
+  // Low price: variants with price > 0 and < 1 (price is stored as string)
+  const allVariantsForPriceCheck = await db.variantSnapshot.findMany({
+    where: { shop },
+    select: { productSnapshotId: true, price: true, productSnapshot: { select: { title: true } } },
+  });
+
+  const lowByProductPrice = new Map<
+    string,
+    { id: string; title: string; variantCount: number }
+  >();
+  for (const v of allVariantsForPriceCheck) {
+    const price = parseFloat(v.price);
+    if (isNaN(price) || price <= 0 || price >= 1) continue;
+    const existing = lowByProductPrice.get(v.productSnapshotId);
+    if (existing) {
+      existing.variantCount++;
+    } else {
+      lowByProductPrice.set(v.productSnapshotId, {
+        id: v.productSnapshotId,
+        title: v.productSnapshot.title,
+        variantCount: 1,
+      });
+    }
+  }
+  const lowPriceProducts = Array.from(lowByProductPrice.values());
 
   // Recently modified products (updated in last 30 days)
   const thirtyDaysAgo = new Date();
@@ -337,6 +389,8 @@ export async function runRiskScan(
   const result: RiskScanResult = {
     zeroStockProducts,
     lowStockVariants: lowStockResult,
+    zeroPriceProducts,
+    lowPriceProducts,
     highDiscounts,
     recentlyModifiedProducts,
     recentlyModifiedCollections,
@@ -349,7 +403,7 @@ export async function runRiskScan(
   };
 
   console.log(
-    `[StoreGuard] Risk scan complete for ${shop}: ${zeroStockProducts.length} zero-stock, ${lowStockResult.length} low-stock, ${highDiscounts.length} high discounts`,
+    `[StoreGuard] Risk scan complete for ${shop}: ${zeroStockProducts.length} zero-stock, ${lowStockResult.length} low-stock, ${zeroPriceProducts.length} zero-price, ${lowPriceProducts.length} low-price, ${highDiscounts.length} high discounts`,
   );
 
   return result;

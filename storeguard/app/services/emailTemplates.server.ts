@@ -35,8 +35,8 @@ export const EVENT_TYPE_CONFIG: Record<string, { title: string; color: string; o
   price_change: { title: "Price Changes", color: "#f59e0b", order: 1 },
   visibility_change: { title: "Visibility Changes", color: "#8b5cf6", order: 2 },
   inventory_low: { title: "Low Stock", color: "#f97316", order: 3 },
-  inventory_zero: { title: "Out of Stock", color: "#ef4444", order: 4 },
-  theme_publish: { title: "Theme Published", color: "#06b6d4", order: 5 },
+  inventory_zero: { title: "Cannot Be Purchased", color: "#ef4444", order: 4 },
+  theme_publish: { title: "Live Theme Replaced", color: "#06b6d4", order: 5 },
   collection_created: { title: "Collection Created", color: "#10b981", order: 6 },
   collection_updated: { title: "Collection Updated", color: "#10b981", order: 7 },
   collection_deleted: { title: "Collection Deleted", color: "#ef4444", order: 8 },
@@ -150,9 +150,9 @@ export function formatDigestChangeDescription(event: DigestEvent): string {
     case "inventory_low":
       return `Stock dropped to ${event.afterValue} units (was ${event.beforeValue})${suffix} &bull; ${time}`;
     case "inventory_zero":
-      return `Now out of stock (was ${event.beforeValue} units)${suffix} &bull; ${time}`;
+      return `Cannot be purchased &mdash; inventory hit zero (was ${event.beforeValue} units)${suffix} &bull; ${time}`;
     case "theme_publish":
-      return `Now your live theme &bull; ${time}`;
+      return `Live theme replaced &bull; ${time}`;
     case "collection_created":
       return `New collection created &bull; ${time}`;
     case "collection_updated":
@@ -319,16 +319,19 @@ export interface InstantAlertEvent {
 /** Get subject line for instant alert */
 export function getInstantAlertSubject(event: InstantAlertEvent, shopName: string): string {
   switch (event.eventType) {
-    case "price_change":
+    case "price_change": {
+      const afterPrice = parseFloat(event.afterValue ?? "");
+      if (afterPrice === 0) return `Product priced at $0: ${event.resourceName} - ${shopName}`;
       return `Price changed: ${event.resourceName} - ${shopName}`;
+    }
     case "visibility_change":
-      return `Product ${event.afterValue === "active" ? "published" : "hidden"}: ${event.resourceName} - ${shopName}`;
+      return `Product ${event.afterValue === "active" ? "restored" : "hidden"}: ${event.resourceName} - ${shopName}`;
     case "inventory_low":
       return `Low stock: ${event.resourceName} (${event.afterValue} left) - ${shopName}`;
     case "inventory_zero":
-      return `Out of stock: ${event.resourceName} - ${shopName}`;
+      return `Cannot be purchased: ${event.resourceName} - ${shopName}`;
     case "theme_publish":
-      return `Theme published: ${event.resourceName} - ${shopName}`;
+      return `Live theme replaced: ${event.resourceName} - ${shopName}`;
     case "collection_created":
       return `Collection created: ${event.resourceName} - ${shopName}`;
     case "collection_updated":
@@ -368,16 +371,18 @@ export function buildInstantAlertDescription(event: InstantAlertEvent): string {
       description = `Price changed from ${event.beforeValue} to ${event.afterValue}`;
       break;
     case "visibility_change":
-      description = `Status changed from ${event.beforeValue} to ${event.afterValue}`;
+      description = event.afterValue === "active"
+        ? `Product restored &mdash; now visible to customers (was ${event.beforeValue})`
+        : `Product hidden &mdash; no longer visible to customers (was ${event.beforeValue}, now ${event.afterValue})`;
       break;
     case "inventory_low":
-      description = `Stock dropped to ${event.afterValue} units total (was ${event.beforeValue})`;
+      description = `Stock dropped to ${event.afterValue} units total (was ${event.beforeValue}) &mdash; close to selling out`;
       break;
     case "inventory_zero":
-      description = `Now out of stock across all locations (was ${event.beforeValue} units)`;
+      description = `Cannot be purchased &mdash; inventory is now zero across all locations (was ${event.beforeValue} units)`;
       break;
     case "theme_publish":
-      description = `&quot;${event.resourceName}&quot; is now your live theme`;
+      description = `Your live theme was replaced with &quot;${event.resourceName}&quot;`;
       break;
     case "collection_created":
       description = `Collection &quot;${event.resourceName}&quot; was created`;

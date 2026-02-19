@@ -292,25 +292,25 @@ function SetupStep({
             checked={monitors.trackPrices}
             onChange={() => toggle("trackPrices")}
             label="Price changes"
-            description="Alert when variant prices are modified"
+            description="Alert when prices change unexpectedly"
           />
           <MonitorOption
             checked={monitors.trackVisibility}
             onChange={() => toggle("trackVisibility")}
             label="Visibility changes"
-            description="Alert when products are published, hidden, or archived"
+            description="Alert when products become invisible to customers"
           />
           <MonitorOption
             checked={monitors.trackInventory}
             onChange={() => toggle("trackInventory")}
             label="Inventory alerts"
-            description="Alert on low stock and out of stock"
+            description="Alert when products can no longer be purchased"
           />
           <MonitorOption
             checked={monitors.trackCollections}
             onChange={() => toggle("trackCollections")}
             label="Collection changes"
-            description="Alert when collections are created, updated, or deleted"
+            description="Alert when store collections change"
           />
         </div>
         {monitorError && <p style={{ color: "#dc2626", fontSize: 12, marginTop: 8 }}>{monitorError}</p>}
@@ -352,7 +352,7 @@ function SetupStep({
       </div>
 
       <button type="button" onClick={onStart} style={{ ...primaryButtonStyle, width: "100%" }}>
-        Start monitoring
+        Run Protection Scan
       </button>
     </div>
   );
@@ -395,7 +395,12 @@ function ScanningStep({
           done={syncDone}
         />
         <ScanLine
-          label="Discounts reviewed"
+          label="Prices verified"
+          value={syncDone ? (riskScanResult?.totalVariants ?? null) : null}
+          done={syncDone}
+        />
+        <ScanLine
+          label="Discounts analyzed"
           value={scanDone ? (riskScanResult?.totalDiscounts ?? 0) : null}
           done={scanDone}
         />
@@ -464,11 +469,13 @@ function ResultsStep({
 }) {
   const hasRisks = result.zeroStockProducts.length > 0 ||
     result.lowStockVariants.length > 0 ||
+    (result.zeroPriceProducts?.length ?? 0) > 0 ||
+    (result.lowPriceProducts?.length ?? 0) > 0 ||
     result.highDiscounts.length > 0;
 
   return (
     <div style={cardStyle}>
-      <h2 style={{ ...headingStyle, textAlign: "center" }}>Your store scan is complete</h2>
+      <h2 style={{ ...headingStyle, textAlign: "center" }}>Protection Baseline Established</h2>
 
       {/* Immediate Risks */}
       <div style={sectionStyle}>
@@ -485,6 +492,18 @@ function ResultsStep({
               <RiskItem
                 severity="medium"
                 text={`${result.lowStockVariants.length} variant${result.lowStockVariants.length === 1 ? "" : "s"} ${result.lowStockVariants.length === 1 ? "is" : "are"} below your low-stock threshold`}
+              />
+            )}
+            {(result.zeroPriceProducts?.length ?? 0) > 0 && (
+              <RiskItem
+                severity="high"
+                text={`${result.zeroPriceProducts!.length} product${result.zeroPriceProducts!.length === 1 ? " is" : "s are"} currently priced at $0 — Customers can check out without paying.`}
+              />
+            )}
+            {(result.lowPriceProducts?.length ?? 0) > 0 && (
+              <RiskItem
+                severity="medium"
+                text={`${result.lowPriceProducts!.length} product${result.lowPriceProducts!.length === 1 ? "" : "s"} priced under $1 — Verify these are intentional.`}
               />
             )}
             {result.highDiscounts.length > 0 && (
@@ -570,7 +589,7 @@ function ResultsStep({
           opacity: isSubmitting ? 0.6 : 1,
           cursor: isSubmitting ? "not-allowed" : "pointer",
         }}>
-          {isSubmitting ? "Finishing..." : "Start protecting my store"}
+          {isSubmitting ? "Finishing..." : "Go to Dashboard"}
         </button>
       </Form>
     </div>

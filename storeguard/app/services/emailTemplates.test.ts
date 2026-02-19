@@ -149,7 +149,7 @@ describe("generateDigestEmailHtml", () => {
       },
     }));
     expect(html).toContain("Price Changes");
-    expect(html).toContain("Out of Stock");
+    expect(html).toContain("Cannot Be Purchased");
   });
 
   it("renders event sections in display order", () => {
@@ -160,7 +160,7 @@ describe("generateDigestEmailHtml", () => {
       },
     }));
     const priceIdx = html.indexOf("Price Changes");
-    const stockIdx = html.indexOf("Out of Stock");
+    const stockIdx = html.indexOf("Cannot Be Purchased");
     expect(priceIdx).toBeLessThan(stockIdx);
   });
 
@@ -234,7 +234,7 @@ describe("formatDigestChangeDescription", () => {
       beforeValue: "15",
       afterValue: "0",
     }));
-    expect(result).toContain("out of stock");
+    expect(result).toContain("Cannot be purchased");
     expect(result).toContain("15 units");
   });
 
@@ -253,7 +253,7 @@ describe("formatDigestChangeDescription", () => {
       eventType: "theme_publish",
       resourceName: "Dawn Custom",
     }));
-    expect(result).toContain("live theme");
+    expect(result).toContain("Live theme replaced");
   });
 
   it("includes velocity context from contextData", () => {
@@ -399,13 +399,13 @@ describe("getInstantAlertSubject", () => {
     expect(getInstantAlertSubject(makeInstantEvent({ eventType: "price_change" }), "shop"))
       .toContain("Price changed");
     expect(getInstantAlertSubject(makeInstantEvent({ eventType: "inventory_zero" }), "shop"))
-      .toContain("Out of stock");
+      .toContain("Cannot be purchased");
     expect(getInstantAlertSubject(makeInstantEvent({ eventType: "inventory_low", afterValue: "3" }), "shop"))
       .toContain("Low stock");
     expect(getInstantAlertSubject(makeInstantEvent({ eventType: "theme_publish" }), "shop"))
-      .toContain("Theme published");
+      .toContain("Live theme replaced");
     expect(getInstantAlertSubject(makeInstantEvent({ eventType: "visibility_change", afterValue: "active" }), "shop"))
-      .toContain("published");
+      .toContain("restored");
     expect(getInstantAlertSubject(makeInstantEvent({ eventType: "visibility_change", afterValue: "draft" }), "shop"))
       .toContain("hidden");
   });
@@ -459,7 +459,8 @@ describe("buildInstantAlertDescription", () => {
       beforeValue: "active",
       afterValue: "draft",
     }));
-    expect(desc).toContain("Status changed from active to draft");
+    expect(desc).toContain("Product hidden");
+    expect(desc).toContain("no longer visible to customers");
   });
 
   it("describes inventory zero", () => {
@@ -467,7 +468,7 @@ describe("buildInstantAlertDescription", () => {
       eventType: "inventory_zero",
       beforeValue: "15",
     }));
-    expect(desc).toContain("out of stock");
+    expect(desc).toContain("Cannot be purchased");
     expect(desc).toContain("15 units");
   });
 

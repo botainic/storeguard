@@ -193,19 +193,19 @@ export default function Settings() {
           <Toggle
             name="trackPrices"
             label="Price changes"
-            description="Track when product variant prices are modified"
+            description="Alert when prices change unexpectedly"
             defaultChecked={settings.trackPrices}
           />
           <Toggle
             name="trackVisibility"
             label="Visibility changes"
-            description="Track when products are published, hidden, or archived"
+            description="Alert when products become invisible to customers"
             defaultChecked={settings.trackVisibility}
           />
           <Toggle
             name="trackInventory"
             label="Inventory alerts"
-            description="Track low stock and out of stock"
+            description="Alert when products can no longer be purchased"
             defaultChecked={settings.trackInventory}
           />
           {settings.trackInventory && (
@@ -234,7 +234,7 @@ export default function Settings() {
           <Toggle
             name="trackCollections"
             label="Collection changes"
-            description="Track when collections are created, updated, or deleted"
+            description="Alert when store collections change"
             defaultChecked={settings.trackCollections}
           />
           <Toggle

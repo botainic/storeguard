@@ -35,7 +35,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
-// Event type display config
+// Event type display config (default labels — some are overridden dynamically)
 const eventConfig: Record<string, { label: string; color: string }> = {
   product_updated: { label: "Product Updated", color: "#6b7280" },
   product_created: { label: "Product Created", color: "#10b981" },
@@ -44,8 +44,8 @@ const eventConfig: Record<string, { label: string; color: string }> = {
   price_change: { label: "Price Change", color: "#ffa500" },
   visibility_change: { label: "Visibility Change", color: "#9b59b6" },
   inventory_low: { label: "Low Stock", color: "#f97316" },
-  inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
-  theme_publish: { label: "Theme Published", color: "#3498db" },
+  inventory_zero: { label: "Cannot Be Purchased", color: "#e74c3c" },
+  theme_publish: { label: "Live Theme Replaced", color: "#3498db" },
   collection_created: { label: "Collection Created", color: "#10b981" },
   collection_updated: { label: "Collection Updated", color: "#10b981" },
   collection_deleted: { label: "Collection Deleted", color: "#e74c3c" },
@@ -56,6 +56,21 @@ const eventConfig: Record<string, { label: string; color: string }> = {
   domain_changed: { label: "Domain Changed", color: "#0891b2" },
   domain_removed: { label: "Domain Removed", color: "#e74c3c" },
 };
+
+/** Get dynamic event label based on event data */
+function getEventLabel(event: ChangeEvent): string {
+  if (event.eventType === "price_change") {
+    const afterPrice = parseFloat(event.afterValue ?? "");
+    if (afterPrice === 0) return "Product Priced at $0";
+    return "Price Change";
+  }
+  if (event.eventType === "visibility_change") {
+    const after = event.afterValue?.toLowerCase();
+    if (after === "active") return "Product Restored";
+    return "Product Hidden";
+  }
+  return eventConfig[event.eventType]?.label ?? event.eventType;
+}
 
 const importanceConfig: Record<string, { label: string; color: string }> = {
   high: { label: "High", color: "#e74c3c" },
@@ -103,6 +118,7 @@ export default function RecentChanges() {
               label: event.eventType,
               color: "#666",
             };
+            const dynamicLabel = getEventLabel(event);
             const importance = importanceConfig[event.importance] || importanceConfig.medium;
             const detectedDate = new Date(event.detectedAt);
 
@@ -140,7 +156,7 @@ export default function RecentChanges() {
                         letterSpacing: "0.5px",
                       }}
                     >
-                      {config.label}
+                      {dynamicLabel}
                     </span>
                     <span
                       style={{
