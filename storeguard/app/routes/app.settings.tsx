@@ -2,9 +2,8 @@ import type { ActionFunctionArgs, LoaderFunctionArgs, HeadersFunction } from "re
 import { Form, useLoaderData, useActionData, useNavigation, useRouteError, useSearchParams } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState } from "react";
-import { authenticate } from "../shopify.server";
+import { authenticate, PRO_MONTHLY_PLAN } from "../shopify.server";
 import { getOrCreateShop, updateShopSettings, type ShopSettings } from "../services/shopService.server";
-import { getSubscriptionStatus } from "../services/stripeService.server";
 
 interface ActionResponse {
   success: boolean;
@@ -13,10 +12,33 @@ interface ActionResponse {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const settings = await getOrCreateShop(session.shop);
-  const subscription = await getSubscriptionStatus(session.shop);
-  return { settings, subscription, shop: session.shop };
+  
+  // Check billing status via Shopify Billing API and sync to DB
+  const { hasActivePayment, appSubscriptions } = await billing.check({
+    plans: [PRO_MONTHLY_PLAN],
+  });
+  
+  const plan = hasActivePayment ? "pro" as const : "free" as const;
+  
+  // Sync billing status to DB (so webhook processors can check plan without billing API)
+  if (settings.plan !== plan) {
+    await import("../db.server").then(({ default: db }) =>
+      db.shop.update({
+        where: { shopifyDomain: session.shop },
+        data: { plan },
+      })
+    );
+  }
+  
+  const subscription = {
+    plan,
+    hasSubscription: hasActivePayment,
+    subscriptionId: appSubscriptions[0]?.id || null,
+  };
+  
+  return { settings: { ...settings, plan }, subscription, shop: session.shop };
 };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse> => {
@@ -104,18 +126,35 @@ export default function Settings() {
     setBillingError(null);
     try {
       const url = action ? `/api/billing/checkout?action=${action}` : "/api/billing/checkout";
-      const response = await fetch(url, { method: "POST" });
+      const response = await fetch(url, { method: "POST", redirect: "manual" });
+      
+      // Shopify billing returns a redirect to the payment page
+      if (response.type === "opaqueredirect" || response.status === 0) {
+        // The redirect was handled by the browser
+        return;
+      }
+      
+      if (response.status >= 300 && response.status < 400) {
+        const redirectUrl = response.headers.get("location");
+        if (redirectUrl) {
+          window.open(redirectUrl, "_top");
+          return;
+        }
+      }
+
       const data = await response.json();
       if (data.error) {
         setBillingError(data.error);
         setBillingLoading(false);
         return;
       }
-      if (data.redirectUrl) {
-        window.open(data.redirectUrl, "_top");
+      if (data.success) {
+        // Cancellation succeeded, reload page
+        window.location.reload();
+        return;
       }
     } catch {
-      setBillingError("Failed to connect to billing. Please try again.");
+      // Redirect responses may throw — that's expected with Shopify billing
       setBillingLoading(false);
     }
   };
@@ -295,7 +334,11 @@ export default function Settings() {
           ) : (
             <button
               type="button"
-              onClick={() => handleBillingRedirect("portal")}
+              onClick={() => {
+                if (confirm("Are you sure you want to cancel your Pro subscription? You'll lose access to Pro features.")) {
+                  handleBillingRedirect("cancel");
+                }
+              }}
               disabled={billingLoading}
               style={{
                 background: "#fff",
@@ -308,7 +351,7 @@ export default function Settings() {
                 cursor: billingLoading ? "not-allowed" : "pointer",
               }}
             >
-              {billingLoading ? "Loading..." : "Manage subscription"}
+              {billingLoading ? "Loading..." : "Cancel subscription"}
             </button>
           )}
         </Section>

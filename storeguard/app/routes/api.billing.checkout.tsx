@@ -1,41 +1,55 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
-import { createCheckoutSession, createPortalSession } from "../services/stripeService.server";
+import { authenticate, PRO_MONTHLY_PLAN } from "../shopify.server";
 
 /**
- * Billing Checkout API
+ * Billing Checkout API — Shopify Billing
  *
- * POST /api/billing/checkout - Create Stripe Checkout session for Pro upgrade
- * POST /api/billing/checkout?action=portal - Create Customer Portal session
+ * POST /api/billing/checkout - Request Pro subscription via Shopify Billing API
+ * POST /api/billing/checkout?action=cancel - Cancel active subscription
  *
- * Returns JSON with redirect URL - client uses App Bridge for external redirect
+ * Shopify handles the entire payment flow — no external payment processor needed.
  */
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const action = url.searchParams.get("action");
-
-  // Base URL for redirects (back to the app in Shopify admin)
-  const appUrl = `https://${session.shop}/admin/apps/insightops`;
-  const settingsUrl = `${appUrl}/settings`;
+  const actionParam = url.searchParams.get("action");
 
   try {
-    if (action === "portal") {
-      // Customer portal for managing existing subscription
-      const portalUrl = await createPortalSession(session.shop, settingsUrl);
-      return Response.json({ redirectUrl: portalUrl });
+    if (actionParam === "cancel") {
+      // Get current subscription to cancel
+      const { appSubscriptions } = await billing.check({
+        plans: [PRO_MONTHLY_PLAN],
+      });
+
+      if (appSubscriptions.length > 0) {
+        await billing.cancel({
+          subscriptionId: appSubscriptions[0].id,
+          prorate: true,
+        });
+        return Response.json({ success: true, message: "Subscription cancelled" });
+      }
+
+      return Response.json({ error: "No active subscription" }, { status: 400 });
     }
 
-    // Default: Create checkout session for Pro upgrade
-    const checkoutUrl = await createCheckoutSession(
-      session.shop,
-      `${settingsUrl}?upgraded=true`, // Success URL
-      `${settingsUrl}?canceled=true`  // Cancel URL
-    );
+    // Default: Request Pro subscription
+    // billing.request() throws a redirect Response to Shopify's payment page
+    // After merchant approves, Shopify redirects back to the app
+    await billing.request({
+      plan: PRO_MONTHLY_PLAN,
+      isTest: process.env.NODE_ENV !== "production",
+    });
 
-    return Response.json({ redirectUrl: checkoutUrl });
+    // billing.request() never returns — it throws a redirect
+    // This line is only reached if something unexpected happens
+    return Response.json({ error: "Unexpected billing state" }, { status: 500 });
   } catch (error) {
+    // billing.request() throws a Response (redirect) — let it through
+    if (error instanceof Response) {
+      throw error;
+    }
+
     console.error("[StoreGuard] Billing error:", error);
     return Response.json(
       { error: error instanceof Error ? error.message : "Billing error" },

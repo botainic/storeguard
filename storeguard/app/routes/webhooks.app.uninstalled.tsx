@@ -2,22 +2,16 @@ import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { markShopUninstalled } from "../services/shopService.server";
-import { cancelShopSubscription } from "../services/stripeService.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, session, topic } = await authenticate.webhook(request);
 
   console.log(`[StoreGuard] Received ${topic} webhook for ${shop}`);
 
-  // 1. Cancel any active Stripe subscription to stop billing
-  try {
-    await cancelShopSubscription(shop);
-  } catch (error) {
-    // Log but continue - don't fail uninstall if Stripe fails
-    console.error(`[StoreGuard] Error canceling subscription on uninstall:`, error);
-  }
+  // Note: Shopify Billing automatically cancels subscriptions on uninstall
+  // No need to manually cancel via API
 
-  // 2. Mark shop as uninstalled (keeps data for GDPR compliance - deleted after 48h via SHOP_REDACT)
+  // 1. Mark shop as uninstalled (keeps data for GDPR compliance - deleted after 48h via SHOP_REDACT)
   await markShopUninstalled(shop);
 
   // 3. Clean up pending webhook jobs (no point processing for uninstalled shop)
@@ -32,7 +26,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await db.session.deleteMany({ where: { shop } });
   }
 
-  console.log(`[StoreGuard] App uninstalled for ${shop} - subscription canceled, jobs cleared`);
+  console.log(`[StoreGuard] App uninstalled for ${shop} - jobs cleared`);
 
   return new Response();
 };
