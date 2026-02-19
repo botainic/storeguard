@@ -21,16 +21,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   await getOrCreateShop(session.shop);
 
-  // DEBUG: ?reset=1 to re-trigger onboarding (temporary, remove before launch)
-  const reqUrl = new URL(request.url);
-  if (reqUrl.searchParams.get("reset") === "1") {
-    const db = (await import("../db.server")).default;
-    await db.shop.updateMany({
-      where: { shopifyDomain: session.shop },
-      data: { onboardedAt: null, riskScanResult: null, riskScannedAt: null },
-    });
-  }
-
   const onboarded = await isOnboarded(session.shop);
 
   if (onboarded) {
