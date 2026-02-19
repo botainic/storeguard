@@ -27,13 +27,11 @@ Know every store change before it costs you revenue.
 
 ### App details [500 chars max]
 ```
-What changed in your store while you weren't looking?
-
-StoreGuard monitors your Shopify store 24/7 and alerts you instantly when prices change, inventory hits zero, products go invisible, collections are edited, themes are published, or discounts are modified.
+What changed in your store while you weren't looking? StoreGuard monitors your Shopify store 24/7 and alerts you instantly when prices change, inventory hits zero, products go invisible, collections are edited, themes are published, or discounts are modified.
 
 See exactly what changed, when it happened, and take action before it impacts sales.
 ```
-(~350 chars)
+(~340 chars)
 
 ### Feature 1 [80 chars max]
 ```
@@ -49,7 +47,7 @@ Detect $0 prices and zero-inventory products
 
 ### Feature 3 [80 chars max]
 ```
-Monitor theme, collection & discount edits
+Monitor theme, collection and discount changes
 ```
 (43 chars)
 
@@ -125,7 +123,7 @@ inventory alerts
 store monitoring
 ```
 ```
-audit log
+shopify alerts
 ```
 
 ### Title tag (SEO) [60 chars max]
