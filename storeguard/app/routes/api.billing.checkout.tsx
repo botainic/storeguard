@@ -4,11 +4,12 @@ import { authenticate, PRO_MONTHLY_PLAN } from "../shopify.server";
 /**
  * Billing Checkout API — Shopify Billing
  *
- * POST /api/billing/checkout - Request Pro subscription via Shopify Billing API
+ * POST /api/billing/checkout - Request Pro subscription
  * POST /api/billing/checkout?action=cancel - Cancel active subscription
  *
- * For upgrade: billing.request() handles the redirect (via App Bridge exitIframe flow).
- * For cancel: returns JSON success/error.
+ * For upgrade: billing.request() throws a 401 with X-Shopify-API-Request-Failure-Reauthorize-Url
+ * header when called via XHR. App Bridge's patched fetch intercepts this and redirects
+ * the top frame to the Shopify payment page.
  */
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -41,10 +42,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  // Default: Request Pro subscription
-  // billing.request() throws a redirect/401 that Shopify App Bridge handles
-  // For embedded XHR: throws 401 with X-Shopify-API-Request-Failure-Reauthorize-Url
-  // For form POST: throws redirect to exitIframe path
+  // billing.request() throws a Response:
+  // - For XHR: 401 with X-Shopify-API-Request-Failure-Reauthorize-Url header
+  //   → App Bridge intercepts and redirects top frame to payment page
+  // - For non-XHR: redirect to exit-iframe page
   await billing.request({
     plan: PRO_MONTHLY_PLAN,
     isTest: process.env.NODE_ENV !== "production",

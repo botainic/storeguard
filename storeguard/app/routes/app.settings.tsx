@@ -300,22 +300,37 @@ export default function Settings() {
           {settings.plan === "free" ? (
             <button
               type="button"
-              onClick={() => {
-                // Full iframe navigation (not XHR) so Shopify's exitIframe flow works
-                window.location.href = `/app/billing/upgrade?${searchParams.toString()}`;
+              onClick={async () => {
+                setBillingLoading(true);
+                setBillingError(null);
+                try {
+                  // Call our billing API to get the Shopify confirmation URL
+                  const resp = await fetch("/api/billing/checkout", { method: "POST" });
+                  // App Bridge intercepts 401 responses with X-Shopify-API-Request-Failure-Reauthorize-Url
+                  // and automatically redirects the top frame to the payment page
+                  if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    setBillingError(data.error || "Billing request failed");
+                  }
+                } catch {
+                  // App Bridge redirect throws — this is expected
+                } finally {
+                  setBillingLoading(false);
+                }
               }}
+              disabled={billingLoading}
               style={{
-                background: "#1d4ed8",
+                background: billingLoading ? "#93c5fd" : "#1d4ed8",
                 color: "#fff",
                 padding: "10px 16px",
                 fontSize: 13,
                 fontWeight: 500,
                 border: "none",
                 borderRadius: 6,
-                cursor: "pointer",
+                cursor: billingLoading ? "not-allowed" : "pointer",
               }}
             >
-              Upgrade to Pro — $19/mo
+              {billingLoading ? "Redirecting..." : "Upgrade to Pro — $19/mo"}
             </button>
           ) : (
             <button
