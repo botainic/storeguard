@@ -1,5 +1,5 @@
 import db from "../db.server";
-import { ADMIN_SHOPS } from "../shopify.server";
+import { ADMIN_SHOPS } from "../config.server";
 
 export interface ShopSettings {
   plan: "free" | "pro";

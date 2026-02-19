@@ -11,13 +11,8 @@ import prisma from "./db.server";
 // Billing plan names (exported for use in routes)
 export const PRO_MONTHLY_PLAN = "StoreGuard Pro";
 
-// Admin shops that get Pro features for free (your test stores)
-// Reads from ADMIN_SHOPS env var (comma-separated) + hardcoded defaults
-export const ADMIN_SHOPS = [
-  "storeguard-dev.myshopify.com",
-  "insight-ops-dev.myshopify.com",
-  ...(process.env.ADMIN_SHOPS?.split(",").map((s) => s.trim()).filter(Boolean) || []),
-];
+// Re-export ADMIN_SHOPS from config (avoid circular imports)
+export { ADMIN_SHOPS } from "./config.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
