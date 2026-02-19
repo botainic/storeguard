@@ -27,4 +27,4 @@ RUN npm run build
 RUN npm prune --production
 
 # Run migrations and start server
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npm run start"]
+CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss && npm run start"]
