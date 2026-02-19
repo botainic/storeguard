@@ -92,7 +92,27 @@ export async function getPendingJobs(limit: number = 10) {
 }
 
 /**
- * Mark a job as processing
+ * Atomically claim a job for processing.
+ * Uses updateMany with status check to prevent race conditions
+ * when multiple workers try to claim the same job.
+ * Returns true if the job was claimed, false if already taken.
+ */
+export async function claimJob(jobId: string): Promise<boolean> {
+  const result = await db.webhookJob.updateMany({
+    where: {
+      id: jobId,
+      status: "pending", // Only claim if still pending
+    },
+    data: {
+      status: "processing",
+      attempts: { increment: 1 },
+    },
+  });
+  return result.count > 0;
+}
+
+/**
+ * Mark a job as processing (legacy — prefer claimJob for atomic claims)
  */
 export async function markJobProcessing(jobId: string) {
   return db.webhookJob.update({

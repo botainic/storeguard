@@ -2,7 +2,7 @@ import db from "../db.server";
 import { apiVersion } from "../shopify.server";
 import {
   getPendingJobs,
-  markJobProcessing,
+  claimJob,
   markJobCompleted,
   markJobFailed,
 } from "./jobQueue.server";
@@ -1159,7 +1159,10 @@ export async function processPendingJobs(): Promise<{
 
   for (const job of jobs) {
     try {
-      await markJobProcessing(job.id);
+      // Atomically claim the job — skip if another worker already took it
+      const claimed = await claimJob(job.id);
+      if (!claimed) continue;
+
       await processJob(job);
       await markJobCompleted(job.id);
       processed++;

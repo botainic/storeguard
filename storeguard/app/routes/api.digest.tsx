@@ -25,7 +25,10 @@ const CRON_SECRET = process.env.CRON_SECRET || process.env.JOB_PROCESSOR_SECRET;
 
 function isAuthorized(request: Request): boolean {
   if (!CRON_SECRET) {
-    console.warn("[StoreGuard] No CRON_SECRET configured, digest endpoint is open");
+    if (process.env.NODE_ENV === "production") {
+      console.error("[StoreGuard] CRON_SECRET not configured — rejecting digest request");
+      return false;
+    }
     return true; // Allow in development
   }
 

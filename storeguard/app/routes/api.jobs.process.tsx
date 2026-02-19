@@ -15,9 +15,16 @@ import { cleanupOldJobs } from "../services/jobQueue.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   // Simple auth check - in production, use a proper secret
   const authHeader = request.headers.get("Authorization");
-  const expectedToken = process.env.JOB_PROCESSOR_SECRET || "storeguard-jobs";
+  const expectedToken = process.env.JOB_PROCESSOR_SECRET;
 
-  if (authHeader !== `Bearer ${expectedToken}`) {
+  // Require secret in production
+  if (!expectedToken && process.env.NODE_ENV === "production") {
+    return new Response(JSON.stringify({ error: "JOB_PROCESSOR_SECRET not configured" }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (expectedToken && authHeader !== `Bearer ${expectedToken}`) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
