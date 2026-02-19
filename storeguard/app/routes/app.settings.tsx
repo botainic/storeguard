@@ -304,16 +304,16 @@ export default function Settings() {
                 setBillingLoading(true);
                 setBillingError(null);
                 try {
-                  // Call our billing API to get the Shopify confirmation URL
                   const resp = await fetch("/api/billing/checkout", { method: "POST" });
-                  // App Bridge intercepts 401 responses with X-Shopify-API-Request-Failure-Reauthorize-Url
-                  // and automatically redirects the top frame to the payment page
-                  if (!resp.ok) {
-                    const data = await resp.json().catch(() => ({}));
-                    setBillingError(data.error || "Billing request failed");
+                  const data = await resp.json();
+                  if (data.confirmationUrl) {
+                    // Open Shopify's payment confirmation in the top frame
+                    window.top?.location.assign(data.confirmationUrl);
+                    return;
                   }
+                  setBillingError(data.error || "Billing request failed");
                 } catch {
-                  // App Bridge redirect throws — this is expected
+                  setBillingError("Failed to connect to billing");
                 } finally {
                   setBillingLoading(false);
                 }
