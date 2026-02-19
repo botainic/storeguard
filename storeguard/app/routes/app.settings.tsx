@@ -41,28 +41,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { settings: { ...settings, plan }, subscription, shop: session.shop };
 };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse | never> => {
-  const { session, billing } = await authenticate.admin(request);
+export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse> => {
+  const { session } = await authenticate.admin(request);
   const formData = await request.formData();
-
-  // Handle billing upgrade request
-  const intent = formData.get("intent");
-  if (intent === "upgrade") {
-    try {
-      await billing.request({
-        plan: PRO_MONTHLY_PLAN,
-        isTest: process.env.NODE_ENV !== "production",
-      });
-    } catch (error) {
-      // billing.request() throws a Response (redirect) — let it through
-      if (error instanceof Response) {
-        throw error;
-      }
-      console.error("[StoreGuard] Billing request error:", error);
-      return { success: false, message: error instanceof Error ? error.message : "Billing error" };
-    }
-    return { success: false, message: "Unexpected billing state" };
-  }
 
   const alertEmail = formData.get("alertEmail") as string | null;
   const trackPrices = formData.get("trackPrices") === "on";
@@ -316,24 +297,23 @@ export default function Settings() {
           )}
 
           {settings.plan === "free" ? (
-            <Form method="post">
-              <input type="hidden" name="intent" value="upgrade" />
-              <button
-                type="submit"
-                style={{
-                  background: "#1d4ed8",
-                  color: "#fff",
-                  padding: "10px 16px",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  border: "none",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                }}
-              >
-                Upgrade to Pro — $19/mo
-              </button>
-            </Form>
+            <a
+              href="/app/billing/upgrade"
+              style={{
+                display: "inline-block",
+                background: "#1d4ed8",
+                color: "#fff",
+                padding: "10px 16px",
+                fontSize: 13,
+                fontWeight: 500,
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                textDecoration: "none",
+              }}
+            >
+              Upgrade to Pro — $19/mo
+            </a>
           ) : (
             <button
               type="button"
