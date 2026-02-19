@@ -196,7 +196,7 @@ export async function markShopUninstalled(shopDomain: string): Promise<void> {
 
 /**
  * Upgrade a shop to Pro plan.
- * Called after successful Stripe payment.
+ * Called when Shopify Billing subscription is activated.
  */
 export async function upgradeShopToPro(shopDomain: string): Promise<void> {
   await db.shop.update({
@@ -208,7 +208,7 @@ export async function upgradeShopToPro(shopDomain: string): Promise<void> {
 
 /**
  * Downgrade a shop to Free plan.
- * Called after Stripe subscription cancellation.
+ * Called when Shopify Billing subscription is cancelled.
  */
 export async function downgradeShopToFree(shopDomain: string): Promise<void> {
   await db.shop.update({

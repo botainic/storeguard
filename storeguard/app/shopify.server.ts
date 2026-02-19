@@ -9,8 +9,6 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 
 // Billing plan names (exported for use in routes)
-// Note: We're transitioning to Stripe for billing, but keeping Shopify billing
-// as fallback until Stripe integration is complete
 export const PRO_MONTHLY_PLAN = "StoreGuard Pro";
 
 // Admin shops that get Pro features for free (your test stores)

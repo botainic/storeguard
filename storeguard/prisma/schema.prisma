@@ -50,9 +50,7 @@ model Shop {
   installedAt     DateTime  @default(now())
   onboardedAt     DateTime? // When onboarding was completed (null = not onboarded)
   uninstalledAt   DateTime?
-  // Stripe billing
-  stripeCustomerId     String?  @unique // Stripe customer ID (cus_xxx)
-  stripeSubscriptionId String?  // Active subscription ID (sub_xxx)
+  // Billing managed by Shopify Billing API (plan synced on settings load)
 }
 
 // Change events for alerting (core of StoreGuard)

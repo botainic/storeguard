@@ -71,7 +71,7 @@ export default function Privacy() {
       <ul>
         <li><strong>Render:</strong> Cloud hosting and database (Oregon, USA)</li>
         <li><strong>Resend:</strong> Email delivery for digest and alert emails</li>
-        <li><strong>Stripe:</strong> Payment processing for Pro subscriptions</li>
+        <li><strong>Shopify Billing:</strong> Payment processing for Pro subscriptions</li>
       </ul>
 
       <h2 style={{ fontSize: "24px", marginTop: "32px" }}>4. Data Storage &amp; Security</h2>
