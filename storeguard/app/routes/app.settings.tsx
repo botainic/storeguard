@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs, HeadersFunction } from "react-router";
-import { Form, useLoaderData, useActionData, useNavigation, useRouteError, useSearchParams } from "react-router";
+import { Form, useLoaderData, useActionData, useNavigation, useNavigate, useRouteError, useSearchParams } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState } from "react";
 import { authenticate, PRO_MONTHLY_PLAN } from "../shopify.server";
@@ -105,6 +105,7 @@ export default function Settings() {
   const { settings } = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionResponse>();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isSubmitting = navigation.state === "submitting";
   const [billingLoading, setBillingLoading] = useState(false);
@@ -297,10 +298,10 @@ export default function Settings() {
           )}
 
           {settings.plan === "free" ? (
-            <a
-              href="/app/billing/upgrade"
+            <button
+              type="button"
+              onClick={() => navigate("/app/billing/upgrade")}
               style={{
-                display: "inline-block",
                 background: "#1d4ed8",
                 color: "#fff",
                 padding: "10px 16px",
@@ -309,11 +310,10 @@ export default function Settings() {
                 border: "none",
                 borderRadius: 6,
                 cursor: "pointer",
-                textDecoration: "none",
               }}
             >
               Upgrade to Pro — $19/mo
-            </a>
+            </button>
           ) : (
             <button
               type="button"
