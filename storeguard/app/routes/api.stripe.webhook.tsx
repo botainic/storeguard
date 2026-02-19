@@ -1,4 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
+import { createHmac, timingSafeEqual } from "crypto";
 import {
   handleSubscriptionCreated,
   handleSubscriptionCanceled,
@@ -15,12 +16,61 @@ import {
  * - customer.subscription.created - Subscription started
  * - customer.subscription.updated - Subscription changed
  * - customer.subscription.deleted - Subscription canceled
- *
- * Note: In production, you should verify the webhook signature.
- * Set STRIPE_WEBHOOK_SECRET and use Stripe's signature verification.
  */
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+
+// Stripe signature tolerance: 5 minutes
+const SIGNATURE_TOLERANCE_SEC = 300;
+
+/**
+ * Verify Stripe webhook signature (v1 scheme)
+ * https://docs.stripe.com/webhooks/signatures
+ */
+function verifyStripeSignature(
+  payload: string,
+  signatureHeader: string,
+  secret: string
+): boolean {
+  // Parse the signature header: t=timestamp,v1=signature[,v1=signature...]
+  const parts = signatureHeader.split(",");
+  const timestamp = parts.find((p) => p.startsWith("t="))?.slice(2);
+  const signatures = parts
+    .filter((p) => p.startsWith("v1="))
+    .map((p) => p.slice(3));
+
+  if (!timestamp || signatures.length === 0) {
+    return false;
+  }
+
+  // Check timestamp tolerance (prevent replay attacks)
+  const ts = parseInt(timestamp, 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ts) > SIGNATURE_TOLERANCE_SEC) {
+    console.error(`[StoreGuard] Stripe webhook timestamp too old: ${now - ts}s`);
+    return false;
+  }
+
+  // Compute expected signature: HMAC-SHA256(secret, "timestamp.payload")
+  const signedPayload = `${timestamp}.${payload}`;
+  const expected = createHmac("sha256", secret)
+    .update(signedPayload)
+    .digest("hex");
+
+  // Compare against all v1 signatures (timing-safe)
+  const expectedBuf = Buffer.from(expected, "hex");
+  return signatures.some((sig) => {
+    try {
+      const sigBuf = Buffer.from(sig, "hex");
+      return (
+        expectedBuf.length === sigBuf.length &&
+        timingSafeEqual(expectedBuf, sigBuf)
+      );
+    } catch {
+      return false;
+    }
+  });
+}
 
 interface StripeEvent {
   id: string;
@@ -43,16 +93,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const payload = await request.text();
 
-  // In production, verify webhook signature
-  // For now, we'll trust the payload (test mode)
+  // Verify webhook signature in production
   if (STRIPE_WEBHOOK_SECRET) {
     const signature = request.headers.get("stripe-signature");
     if (!signature) {
       console.error("[StoreGuard] Missing Stripe signature");
       return Response.json({ error: "Missing signature" }, { status: 400 });
     }
-    // TODO: Implement signature verification with stripe library
-    // For V1, we proceed without verification in test mode
+    if (!verifyStripeSignature(payload, signature, STRIPE_WEBHOOK_SECRET)) {
+      console.error("[StoreGuard] Invalid Stripe signature");
+      return Response.json({ error: "Invalid signature" }, { status: 400 });
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    console.error("[StoreGuard] STRIPE_WEBHOOK_SECRET not set in production");
+    return Response.json({ error: "Webhook not configured" }, { status: 500 });
   }
 
   let event: StripeEvent;
