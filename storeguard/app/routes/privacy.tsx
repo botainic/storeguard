@@ -102,7 +102,7 @@ export default function Privacy() {
       <h2 style={{ fontSize: "24px", marginTop: "32px" }}>7. Contact Us</h2>
       <p>
         For questions about this Privacy Policy or your data, contact us at{" "}
-        <a href="mailto:support@storeguard.app" style={{ color: "#0070f3" }}>support@storeguard.app</a>.
+        <a href="mailto:support@mintbird.io" style={{ color: "#0070f3" }}>support@mintbird.io</a>.
       </p>
 
       <p style={{ color: "#637381", marginTop: "40px", fontSize: "14px" }}>

@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
-import { redirect, useLoaderData, useActionData, useNavigation, useRouteError } from "react-router";
+import { redirect, useLoaderData, useActionData, useNavigation, useRouteError, Form } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState } from "react";
 import { authenticate } from "../shopify.server";
@@ -465,7 +465,7 @@ function DoneStep({
         </div>
         <div style={summaryRowStyle}>
           <span style={summaryLabelStyle}>Monitors</span>
-          <span style={{ fontSize: 13, color: "#111827" }}>{activeMonitors.join(", ")}</span>
+          <span style={{ fontSize: 13, color: "#111827", textAlign: "right" }}>{activeMonitors.join(", ")}</span>
         </div>
       </div>
 
@@ -473,7 +473,7 @@ function DoneStep({
         <p style={{ color: "#dc2626", fontSize: 12, marginBottom: 8 }}>{error}</p>
       )}
 
-      <form method="post">
+      <Form method="post">
         <input type="hidden" name="intent" value="complete" />
         <input type="hidden" name="alertEmail" value={email} />
         <input type="hidden" name="trackPrices" value={String(monitors.trackPrices)} />
@@ -493,7 +493,7 @@ function DoneStep({
             {isSubmitting ? "Finishing..." : "Start protecting my store"}
           </button>
         </div>
-      </form>
+      </Form>
     </div>
   );
 }
@@ -562,6 +562,7 @@ const secondaryButtonStyle: React.CSSProperties = {
 const summaryRowStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
+  gap: 16,
   padding: "10px 0",
   borderBottom: "1px solid #f3f4f6",
 };
@@ -570,6 +571,7 @@ const summaryLabelStyle: React.CSSProperties = {
   fontSize: 13,
   color: "#6b7280",
   fontWeight: 500,
+  flexShrink: 0,
 };
 
 const spinnerStyle: React.CSSProperties = {
