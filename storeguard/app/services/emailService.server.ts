@@ -8,15 +8,17 @@
  */
 
 import type { DigestSummary } from "./dailyDigest.server";
+import type { WeeklyHealthSummary } from "./weeklyHealthSummary.server";
 import {
   generateDigestEmailHtml,
   generateInstantAlertHtml,
+  generateWeeklyHealthSummaryHtml,
   getInstantAlertSubject,
   type InstantAlertEvent,
 } from "./emailTemplates.server";
 
 // Re-export template functions for consumers that import from here
-export { generateDigestEmailHtml, generateInstantAlertHtml, type InstantAlertEvent };
+export { generateDigestEmailHtml, generateInstantAlertHtml, generateWeeklyHealthSummaryHtml, type InstantAlertEvent };
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.DIGEST_FROM_EMAIL || "StoreGuard <alerts@storeguard.app>";
@@ -99,4 +101,18 @@ export async function sendInstantAlert(
   console.log(`[StoreGuard] Sending instant alert: ${event.eventType} for ${event.resourceName}`);
 
   return sendEmail(alertEmail, subject, html);
+}
+
+/**
+ * Send weekly health summary email for a shop
+ */
+export async function sendWeeklySummary(
+  summary: WeeklyHealthSummary
+): Promise<SendEmailResult> {
+  const subject = "Your StoreGuard Weekly Health Report";
+  const html = generateWeeklyHealthSummaryHtml(summary);
+
+  console.log(`[StoreGuard] Sending weekly summary to ${summary.alertEmail} for ${summary.shop}`);
+
+  return sendEmail(summary.alertEmail, subject, html);
 }

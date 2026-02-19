@@ -496,3 +496,205 @@ export function generateInstantAlertHtml(event: InstantAlertEvent, shop: string)
 
   return emailShell("StoreGuard Alert", body);
 }
+
+// ============================================
+// WEEKLY HEALTH SUMMARY EMAIL
+// ============================================
+
+import type { WeeklyHealthSummary, WeeklyActivitySummary } from "./weeklyHealthSummary.server";
+
+/** Build the activity rows for the weekly summary */
+function buildActivityRows(activity: WeeklyActivitySummary): string {
+  const items: { label: string; count: number; color: string }[] = [];
+
+  if (activity.priceChanges > 0)
+    items.push({ label: "Price changes detected", count: activity.priceChanges, color: "#f59e0b" });
+  if (activity.inventoryZero > 0)
+    items.push({ label: "Products hit zero stock", count: activity.inventoryZero, color: "#ef4444" });
+  if (activity.inventoryLow > 0)
+    items.push({ label: "Low stock warnings", count: activity.inventoryLow, color: "#f97316" });
+  if (activity.visibilityChanges > 0)
+    items.push({ label: "Visibility changes", count: activity.visibilityChanges, color: "#8b5cf6" });
+  if (activity.themePublishes > 0)
+    items.push({ label: "Theme publishes", count: activity.themePublishes, color: "#06b6d4" });
+  if (activity.collectionChanges > 0)
+    items.push({ label: "Collection changes", count: activity.collectionChanges, color: "#10b981" });
+  if (activity.discountChanges > 0)
+    items.push({ label: "Discount changes", count: activity.discountChanges, color: "#8b5cf6" });
+  if (activity.domainChanges > 0)
+    items.push({ label: "Domain changes", count: activity.domainChanges, color: "#0891b2" });
+  if (activity.appPermissionChanges > 0)
+    items.push({ label: "App permission changes", count: activity.appPermissionChanges, color: "#6366f1" });
+
+  if (items.length === 0) {
+    return `<tr>
+  <td style="padding: 16px 0; color: #059669; font-size: 14px; font-family: ${FONT_STACK};">
+    Good news &mdash; no critical changes detected this week.
+  </td>
+</tr>`;
+  }
+
+  return items
+    .map(
+      (item) => `<tr>
+  <td style="padding: 10px 0; border-bottom: 1px solid ${BORDER_LIGHT};">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="font-family: ${FONT_STACK}; font-size: 14px; color: ${TEXT_PRIMARY};">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td width="10" valign="middle" style="padding-right: 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr><td width="8" height="8" style="width: 8px; height: 8px; background-color: ${item.color}; border-radius: 50%; font-size: 1px; line-height: 1px;">&nbsp;</td></tr>
+                </table>
+              </td>
+              <td style="font-family: ${FONT_STACK}; font-size: 14px; color: ${TEXT_PRIMARY};">
+                <strong>${item.count}</strong> ${item.label}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`,
+    )
+    .join("");
+}
+
+/** Build the exposure snapshot rows */
+function buildExposureRows(exposure: { zeroStockCount: number; lowStockCount: number; zeroPriceCount: number; highDiscountCount: number }, hasData: boolean): string {
+  if (!hasData) {
+    return `<tr>
+  <td style="padding: 16px 0; color: ${TEXT_SECONDARY}; font-size: 14px; font-family: ${FONT_STACK};">
+    Run a protection scan from your dashboard to see current exposure data.
+  </td>
+</tr>`;
+  }
+
+  const items: { label: string; count: number; color: string }[] = [];
+
+  if (exposure.zeroStockCount > 0)
+    items.push({ label: "products currently cannot be purchased (zero stock)", count: exposure.zeroStockCount, color: "#ef4444" });
+  if (exposure.lowStockCount > 0)
+    items.push({ label: "variants below stock threshold", count: exposure.lowStockCount, color: "#f97316" });
+  if (exposure.zeroPriceCount > 0)
+    items.push({ label: "products priced at $0", count: exposure.zeroPriceCount, color: "#ef4444" });
+  if (exposure.highDiscountCount > 0)
+    items.push({ label: "active high-value discounts (40%+ or $50+)", count: exposure.highDiscountCount, color: "#f59e0b" });
+
+  if (items.length === 0) {
+    return `<tr>
+  <td style="padding: 16px 0; color: #059669; font-size: 14px; font-family: ${FONT_STACK};">
+    No immediate exposure risks detected.
+  </td>
+</tr>`;
+  }
+
+  return items
+    .map(
+      (item) => `<tr>
+  <td style="padding: 10px 0; border-bottom: 1px solid ${BORDER_LIGHT};">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td width="10" valign="middle" style="padding-right: 8px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+            <tr><td width="8" height="8" style="width: 8px; height: 8px; background-color: ${item.color}; border-radius: 50%; font-size: 1px; line-height: 1px;">&nbsp;</td></tr>
+          </table>
+        </td>
+        <td style="font-family: ${FONT_STACK}; font-size: 14px; color: ${TEXT_PRIMARY};">
+          <strong>${item.count}</strong> ${item.label}
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`,
+    )
+    .join("");
+}
+
+/** Generate the full HTML for a weekly health summary email */
+export function generateWeeklyHealthSummaryHtml(summary: WeeklyHealthSummary): string {
+  const shopName = summary.shop.replace(".myshopify.com", "");
+  const dateRange = `${summary.periodStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${summary.periodEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
+  const activityRows = buildActivityRows(summary.activity);
+  const exposureRows = buildExposureRows(summary.exposure, summary.hasExposureData);
+
+  const body = `
+<!-- Header -->
+<tr>
+  <td align="center" bgcolor="${BRAND_COLOR}" style="background-color: ${BRAND_COLOR}; padding: 28px 24px; border-radius: 8px 8px 0 0;">
+    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">${SHIELD_ICON} StoreGuard</h1>
+    <p style="margin: 8px 0 0; font-size: 14px; color: #a1a1aa; font-family: ${FONT_STACK};">Weekly Health Report for ${shopName}</p>
+  </td>
+</tr>
+<!-- Date range -->
+<tr>
+  <td bgcolor="${CARD_BG}" style="background-color: ${CARD_BG}; padding: 24px 24px 16px; border-bottom: 1px solid ${BORDER_COLOR};">
+    <p style="margin: 0; color: ${TEXT_SECONDARY}; font-size: 14px; font-family: ${FONT_STACK};">${dateRange}</p>
+  </td>
+</tr>
+<!-- Section 1: Activity This Week -->
+<tr>
+  <td bgcolor="${CARD_BG}" style="background-color: ${CARD_BG}; padding: 0 24px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="padding: 20px 0 8px; border-bottom: 2px solid ${BRAND_COLOR};">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: ${TEXT_PRIMARY}; font-family: ${FONT_STACK};">Activity This Week</h2>
+        </td>
+      </tr>
+      ${activityRows}
+    </table>
+  </td>
+</tr>
+<!-- Section 2: Current Exposure Snapshot -->
+<tr>
+  <td bgcolor="${CARD_BG}" style="background-color: ${CARD_BG}; padding: 0 24px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="padding: 24px 0 8px; border-bottom: 2px solid #ef4444;">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: ${TEXT_PRIMARY}; font-family: ${FONT_STACK};">Current Exposure Snapshot</h2>
+        </td>
+      </tr>
+      ${exposureRows}
+    </table>
+  </td>
+</tr>
+<!-- Section 3: Protection Reminder + CTA -->
+<tr>
+  <td bgcolor="${CARD_BG}" style="background-color: ${CARD_BG}; padding: 24px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="padding: 16px; background-color: ${BORDER_LIGHT}; border-radius: 8px;">
+          <p style="margin: 0 0 16px; font-size: 14px; color: ${TEXT_PRIMARY}; line-height: 1.5; font-family: ${FONT_STACK};">
+            StoreGuard is continuously monitoring your store for revenue-impacting changes.
+          </p>
+          <!--[if mso]>
+          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://${summary.shop}/admin/apps/storeguard" style="height:44px;v-text-anchor:middle;width:200px;" arcsize="14%" stroke="f" fillcolor="${BRAND_COLOR}">
+            <w:anchorlock/>
+            <center style="color:#ffffff;font-family:${FONT_STACK};font-size:14px;font-weight:bold;">View Full Report</center>
+          </v:roundrect>
+          <![endif]-->
+          <!--[if !mso]><!-->
+          <a href="https://${summary.shop}/admin/apps/storeguard" style="display: inline-block; background-color: ${BRAND_COLOR}; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 600; font-family: ${FONT_STACK}; line-height: 1; mso-hide: all;">View Full Report</a>
+          <!--<![endif]-->
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>
+<!-- Footer -->
+<tr>
+  <td bgcolor="${CARD_BG}" style="background-color: ${CARD_BG}; padding: 16px 24px 24px; border-radius: 0 0 8px 8px; border-top: 1px solid ${BORDER_COLOR}; text-align: center;">
+    <p style="margin: 0 0 8px; color: ${TEXT_SECONDARY}; font-size: 13px; font-family: ${FONT_STACK};">
+      You're receiving this weekly report because you have alerts configured in StoreGuard.
+    </p>
+    <p style="margin: 0; font-size: 12px; font-family: ${FONT_STACK};">
+      <a href="https://${summary.shop}/admin/apps/storeguard/settings" style="color: ${TEXT_SECONDARY}; text-decoration: underline;">Manage notification settings</a>
+    </p>
+  </td>
+</tr>`;
+
+  return emailShell("StoreGuard Weekly Health Report", body);
+}
