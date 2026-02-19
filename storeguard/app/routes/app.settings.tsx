@@ -300,37 +300,26 @@ export default function Settings() {
           {settings.plan === "free" ? (
             <button
               type="button"
-              onClick={async () => {
-                setBillingLoading(true);
-                setBillingError(null);
-                try {
-                  const resp = await fetch("/api/billing/checkout", { method: "POST" });
-                  const data = await resp.json();
-                  if (data.confirmationUrl) {
-                    // Open Shopify's payment confirmation in the top frame
-                    window.top?.location.assign(data.confirmationUrl);
-                    return;
-                  }
-                  setBillingError(data.error || "Billing request failed");
-                } catch {
-                  setBillingError("Failed to connect to billing");
-                } finally {
-                  setBillingLoading(false);
-                }
+              onClick={() => {
+                // Managed Pricing: Shopify handles billing through the app listing
+                const storeName = shop.replace(".myshopify.com", "");
+                window.open(
+                  `https://admin.shopify.com/store/${storeName}/charges/insightops/pricing_plans`,
+                  "_top"
+                );
               }}
-              disabled={billingLoading}
               style={{
-                background: billingLoading ? "#93c5fd" : "#1d4ed8",
+                background: "#1d4ed8",
                 color: "#fff",
                 padding: "10px 16px",
                 fontSize: 13,
                 fontWeight: 500,
                 border: "none",
                 borderRadius: 6,
-                cursor: billingLoading ? "not-allowed" : "pointer",
+                cursor: "pointer",
               }}
             >
-              {billingLoading ? "Redirecting..." : "Upgrade to Pro — $19/mo"}
+              Upgrade to Pro — $19/mo
             </button>
           ) : (
             <button
