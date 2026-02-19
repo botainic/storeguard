@@ -121,31 +121,23 @@ export default function Settings() {
   const upgraded = searchParams.get("upgraded") === "true";
   const canceled = searchParams.get("canceled") === "true";
 
-  const handleBillingRedirect = async (action?: string) => {
+  const handleCancelSubscription = async () => {
     setBillingLoading(true);
     setBillingError(null);
     try {
-      const url = action ? `/api/billing/checkout?action=${action}` : "/api/billing/checkout";
-      const response = await fetch(url, { method: "POST" });
+      const response = await fetch("/api/billing/checkout?action=cancel", { method: "POST" });
       const data = await response.json();
-      
       if (data.error) {
         setBillingError(data.error);
         setBillingLoading(false);
         return;
       }
-      if (data.redirectUrl) {
-        // Navigate the top frame to Shopify's billing confirmation page
-        window.open(data.redirectUrl, "_top");
-        return;
-      }
       if (data.success) {
-        // Cancellation succeeded, reload page
         window.location.reload();
         return;
       }
     } catch {
-      setBillingError("Failed to connect to billing. Please try again.");
+      setBillingError("Failed to cancel subscription. Please try again.");
       setBillingLoading(false);
     }
   };
@@ -305,29 +297,29 @@ export default function Settings() {
           )}
 
           {settings.plan === "free" ? (
-            <button
-              type="button"
-              onClick={() => handleBillingRedirect()}
-              disabled={billingLoading}
-              style={{
-                background: billingLoading ? "#93c5fd" : "#1d4ed8",
-                color: "#fff",
-                padding: "10px 16px",
-                fontSize: 13,
-                fontWeight: 500,
-                border: "none",
-                borderRadius: 6,
-                cursor: billingLoading ? "not-allowed" : "pointer",
-              }}
-            >
-              {billingLoading ? "Loading..." : "Upgrade to Pro — $19/mo"}
-            </button>
+            <Form method="post" action="/api/billing/checkout">
+              <button
+                type="submit"
+                style={{
+                  background: "#1d4ed8",
+                  color: "#fff",
+                  padding: "10px 16px",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                }}
+              >
+                Upgrade to Pro — $19/mo
+              </button>
+            </Form>
           ) : (
             <button
               type="button"
               onClick={() => {
                 if (confirm("Are you sure you want to cancel your Pro subscription? You'll lose access to Pro features.")) {
-                  handleBillingRedirect("cancel");
+                  handleCancelSubscription();
                 }
               }}
               disabled={billingLoading}

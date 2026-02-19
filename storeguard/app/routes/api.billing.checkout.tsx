@@ -7,7 +7,8 @@ import { authenticate, PRO_MONTHLY_PLAN } from "../shopify.server";
  * POST /api/billing/checkout - Request Pro subscription via Shopify Billing API
  * POST /api/billing/checkout?action=cancel - Cancel active subscription
  *
- * Shopify handles the entire payment flow — no external payment processor needed.
+ * For upgrade: billing.request() handles the redirect (via App Bridge exitIframe flow).
+ * For cancel: returns JSON success/error.
  */
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -15,8 +16,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const url = new URL(request.url);
   const actionParam = url.searchParams.get("action");
 
-  try {
-    if (actionParam === "cancel") {
+  if (actionParam === "cancel") {
+    try {
       const { appSubscriptions } = await billing.check({
         plans: [PRO_MONTHLY_PLAN],
       });
@@ -30,35 +31,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       return Response.json({ error: "No active subscription" }, { status: 400 });
+    } catch (error) {
+      if (error instanceof Response) throw error;
+      console.error("[StoreGuard] Cancel billing error:", error);
+      return Response.json(
+        { error: error instanceof Error ? error.message : "Billing error" },
+        { status: 500 }
+      );
     }
-
-    // billing.request() throws a redirect Response to Shopify's payment confirmation page
-    // We catch it and return the URL as JSON so the frontend can navigate via _top
-    await billing.request({
-      plan: PRO_MONTHLY_PLAN,
-      isTest: process.env.NODE_ENV !== "production",
-    });
-
-    // Never reached — billing.request() always throws
-    return Response.json({ error: "Unexpected billing state" }, { status: 500 });
-  } catch (error) {
-    // billing.request() throws a Response (redirect) — extract the URL and return as JSON
-    if (error instanceof Response && (error.status === 301 || error.status === 302 || error.status === 303 || error.status === 307 || error.status === 308)) {
-      const redirectUrl = error.headers.get("location");
-      if (redirectUrl) {
-        return Response.json({ redirectUrl });
-      }
-    }
-
-    // Re-throw if it's some other Response
-    if (error instanceof Response) {
-      throw error;
-    }
-
-    console.error("[StoreGuard] Billing error:", error);
-    return Response.json(
-      { error: error instanceof Error ? error.message : "Billing error" },
-      { status: 500 }
-    );
   }
+
+  // Default: Request Pro subscription
+  // billing.request() throws a redirect/401 that Shopify App Bridge handles
+  // For embedded XHR: throws 401 with X-Shopify-API-Request-Failure-Reauthorize-Url
+  // For form POST: throws redirect to exitIframe path
+  await billing.request({
+    plan: PRO_MONTHLY_PLAN,
+    isTest: process.env.NODE_ENV !== "production",
+  });
+
+  // Never reached
+  return Response.json({ error: "Unexpected billing state" }, { status: 500 });
 };
