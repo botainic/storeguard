@@ -300,7 +300,10 @@ export default function Settings() {
           {settings.plan === "free" ? (
             <button
               type="button"
-              onClick={() => navigate("/app/billing/upgrade")}
+              onClick={() => {
+                // Full iframe navigation (not XHR) so Shopify's exitIframe flow works
+                window.location.href = `/app/billing/upgrade?${searchParams.toString()}`;
+              }}
               style={{
                 background: "#1d4ed8",
                 color: "#fff",
