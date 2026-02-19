@@ -112,7 +112,7 @@ describe("generateDigestEmailHtml", () => {
     const html = generateDigestEmailHtml(makeDigest());
     expect(html).toContain("StoreGuard");
     // Shield HTML entity
-    expect(html).toContain("&#x1F6E1;");
+    expect(html).toContain("StoreGuard");
   });
 
   it("includes shop name without myshopify.com", () => {
@@ -333,7 +333,7 @@ describe("generateInstantAlertHtml", () => {
 
   it("includes shield branding", () => {
     const html = generateInstantAlertHtml(makeInstantEvent(), "test-store.myshopify.com");
-    expect(html).toContain("&#x1F6E1;");
+    expect(html).toContain("StoreGuard");
   });
 
   it("uses event-specific accent color in header", () => {

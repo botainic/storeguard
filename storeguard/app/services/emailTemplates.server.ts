@@ -6,7 +6,7 @@
  * - All CSS inline (Gmail strips <style> blocks)
  * - 320px minimum width, single column
  * - 14px body font, proper line-heights
- * - StoreGuard branding with shield icon
+ * - StoreGuard branding (clean text wordmark)
  */
 
 import type { DigestSummary, DigestEvent } from "./dailyDigest.server";
@@ -27,8 +27,7 @@ const HIGH_PRIORITY_BG = "#fef2f2";
 const HIGH_PRIORITY_TEXT = "#dc2626";
 const FONT_STACK = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
-/** Shield icon as a simple HTML entity + text (renders consistently across all email clients) */
-const SHIELD_ICON = "&#x1F6E1;&#xFE0F;";
+/** Clean text wordmark — no emoji, no images */
 
 /** Event type display config: title, color, display order */
 export const EVENT_TYPE_CONFIG: Record<string, { title: string; color: string; order: number }> = {
@@ -261,7 +260,7 @@ export function generateDigestEmailHtml(digest: DigestSummary): string {
 <!-- Header -->
 <tr>
   <td align="center" bgcolor="${BRAND_COLOR}" style="background-color: ${BRAND_COLOR}; padding: 28px 24px; border-radius: 8px 8px 0 0;">
-    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">${SHIELD_ICON} StoreGuard</h1>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">StoreGuard</h1>
     <p style="margin: 8px 0 0; font-size: 14px; color: #a1a1aa; font-family: ${FONT_STACK};">Daily Digest for ${shopName}</p>
   </td>
 </tr>
@@ -445,7 +444,7 @@ export function generateInstantAlertHtml(event: InstantAlertEvent, shop: string)
 <!-- Header -->
 <tr>
   <td align="center" bgcolor="${color}" style="background-color: ${color}; padding: 24px; border-radius: 8px 8px 0 0;">
-    <h1 style="margin: 0; font-size: 18px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">${SHIELD_ICON} Instant Alert</h1>
+    <h1 style="margin: 0; font-size: 18px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">StoreGuard Alert</h1>
     <p style="margin: 6px 0 0; font-size: 13px; color: #ffffff; font-family: ${FONT_STACK};">${shopName}</p>
   </td>
 </tr>
@@ -625,7 +624,7 @@ export function generateWeeklyHealthSummaryHtml(summary: WeeklyHealthSummary): s
 <!-- Header -->
 <tr>
   <td align="center" bgcolor="${BRAND_COLOR}" style="background-color: ${BRAND_COLOR}; padding: 28px 24px; border-radius: 8px 8px 0 0;">
-    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">${SHIELD_ICON} StoreGuard</h1>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff; font-family: ${FONT_STACK};">StoreGuard</h1>
     <p style="margin: 8px 0 0; font-size: 14px; color: #a1a1aa; font-family: ${FONT_STACK};">Weekly Health Report for ${shopName}</p>
   </td>
 </tr>
