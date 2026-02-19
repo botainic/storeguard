@@ -72,7 +72,14 @@ export async function getOrCreateStripeCustomer(
   });
 
   if (shop?.stripeCustomerId) {
-    return shop.stripeCustomerId;
+    // Verify the customer exists in current Stripe mode (live vs test)
+    try {
+      await stripeRequest<StripeCustomer>(`/customers/${shop.stripeCustomerId}`);
+      return shop.stripeCustomerId;
+    } catch {
+      // Customer doesn't exist (e.g., switching between live/test keys) — create a new one
+      console.log(`[StoreGuard] Stripe customer ${shop.stripeCustomerId} not found, creating new one`);
+    }
   }
 
   // Create new Stripe customer
