@@ -23,8 +23,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const onboarded = await isOnboarded(session.shop);
 
-  if (onboarded) {
-    const url = new URL(request.url);
+  const url = new URL(request.url);
+  const viewScan = url.searchParams.get("view") === "scan";
+
+  if (onboarded && !viewScan) {
     const params = url.searchParams.toString();
     throw redirect(`/app/changes${params ? `?${params}` : ""}`);
   }
