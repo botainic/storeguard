@@ -27,4 +27,5 @@ RUN npm run build
 RUN npm prune --production
 
 # Run migrations and start server
-CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss && npm run start"]
+# Run migrations (with retry) and start server
+CMD ["sh", "-c", "for i in 1 2 3; do npx prisma db push --skip-generate --accept-data-loss && break || echo \"DB push attempt $i failed, retrying in 5s...\" && sleep 5; done && npm run start"]
