@@ -6,6 +6,10 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 import { syncProducts, needsProductSync } from "../services/productSync.server";
 import { getOrCreateShop } from "../services/shopService.server";
+import { initScheduler } from "../services/scheduler.server";
+
+// Start the in-process scheduler (digest + cleanup) on first load
+initScheduler();
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
