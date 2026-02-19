@@ -171,7 +171,7 @@ export default function Settings() {
   };
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, sans-serif", maxWidth: 540 }}>
+    <div style={{ padding: "24px 16px", fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "0 auto" }}>
       {/* Billing return messages */}
       {upgraded && (
         <div style={{ padding: 12, marginBottom: 16, borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", fontSize: 14 }}>

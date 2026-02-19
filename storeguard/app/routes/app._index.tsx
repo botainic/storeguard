@@ -662,9 +662,9 @@ function StatBadge({ label, value }: { label: string; value: number }) {
 // --- Styles ---
 
 const containerStyle: React.CSSProperties = {
-  maxWidth: 480,
+  maxWidth: 720,
   margin: "0 auto",
-  padding: "40px 16px",
+  padding: "24px 16px",
   fontFamily: "system-ui, sans-serif",
 };
 

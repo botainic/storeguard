@@ -82,7 +82,7 @@ export default function RecentChanges() {
   const { events } = useLoaderData<typeof loader>();
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, sans-serif", maxWidth: 800 }}>
+    <div style={{ padding: "24px 16px", fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "0 auto" }}>
       <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 8, color: "#202223" }}>Recent Changes</h1>
       <p style={{ color: "#637381", marginBottom: 20, fontSize: 14 }}>
         Your store's detected changes from the last 50 events.
