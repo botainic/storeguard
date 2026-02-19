@@ -44,13 +44,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Check if we have a cached risk scan already (e.g. page refresh during results step)
   const cachedRiskScan = await getCachedRiskScan(session.shop);
 
-  // Check if the action is requesting a risk scan
-  const url = new URL(request.url);
-  const runScan = url.searchParams.get("runScan") === "1";
-
   let riskScanResult: RiskScanResult | null = cachedRiskScan;
 
-  if (runScan && syncStatus.status === "completed" && !cachedRiskScan) {
+  // Auto-run risk scan when sync is completed and no cached result exists
+  if (syncStatus.status === "completed" && !cachedRiskScan) {
     try {
       riskScanResult = await runRiskScan(session.shop, admin);
       await saveRiskScanResult(session.shop, riskScanResult);
@@ -133,14 +130,10 @@ export default function Onboarding() {
     return () => clearInterval(interval);
   }, [step, revalidator]);
 
-  // When sync completes and we're scanning, trigger risk scan via loader
+  // When sync completes and we're scanning, revalidate to trigger risk scan in loader
   useEffect(() => {
     if (step === "scanning" && syncStatus.status === "completed" && !scanStarted && !riskScanResult) {
       setScanStarted(true);
-      // Navigate with runScan=1 to trigger the risk scan in the loader
-      const url = new URL(window.location.href);
-      url.searchParams.set("runScan", "1");
-      window.history.replaceState({}, "", url.toString());
       revalidator.revalidate();
     }
   }, [step, syncStatus.status, scanStarted, riskScanResult, revalidator]);
