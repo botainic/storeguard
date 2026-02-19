@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
-import { redirect, useLoaderData, useActionData, useNavigation, useRouteError, Form, useRevalidator } from "react-router";
+import { redirect, useLoaderData, useActionData, useNavigation, useNavigate, useRouteError, Form, useRevalidator } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState, useEffect, useCallback } from "react";
 import { authenticate } from "../shopify.server";
@@ -103,6 +103,7 @@ export default function Onboarding() {
   const actionData = useActionData<ActionResponse>();
   const navigation = useNavigation();
   const revalidator = useRevalidator();
+  const navigate = useNavigate();
   const isSubmitting = navigation.state === "submitting";
 
   const [step, setStep] = useState<OnboardingStep>("setup");
@@ -159,15 +160,12 @@ export default function Onboarding() {
     setStep("scanning");
   }, [email, monitors]);
 
-  // After action succeeds, redirect
-  if (actionData?.success) {
-    window.location.href = "/app/changes";
-    return (
-      <div style={{ ...containerStyle, textAlign: "center", paddingTop: 120 }}>
-        <p style={{ fontSize: 14, color: "#6b7280" }}>Redirecting to your dashboard...</p>
-      </div>
-    );
-  }
+  // After action succeeds, redirect using React Router (preserves Shopify session)
+  useEffect(() => {
+    if (actionData?.success) {
+      navigate("/app/changes");
+    }
+  }, [actionData, navigate]);
 
   return (
     <div style={containerStyle}>
