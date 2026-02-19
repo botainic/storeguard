@@ -17,7 +17,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const action = url.searchParams.get("action");
 
   // Base URL for redirects (back to the app in Shopify admin)
-  const appUrl = `https://${session.shop}/admin/apps/storeguard`;
+  const appUrl = `https://${session.shop}/admin/apps/insightops`;
   const settingsUrl = `${appUrl}/settings`;
 
   try {
