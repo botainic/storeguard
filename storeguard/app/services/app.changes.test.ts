@@ -7,10 +7,15 @@ import { describe, it, expect } from "vitest";
 
 // Mirror the event config from app.changes.tsx to verify completeness
 const eventConfig: Record<string, { label: string; color: string }> = {
+  product_updated: { label: "Product Updated", color: "#6b7280" },
+  product_created: { label: "Product Created", color: "#10b981" },
+  product_deleted: { label: "Product Deleted", color: "#e74c3c" },
+  product_snapshot: { label: "Product Snapshot", color: "#6b7280" },
   price_change: { label: "Price Change", color: "#ffa500" },
   visibility_change: { label: "Visibility", color: "#9b59b6" },
   inventory_low: { label: "Low Stock", color: "#f97316" },
   inventory_zero: { label: "Out of Stock", color: "#e74c3c" },
+  inventory_update: { label: "Stock Update", color: "#2563eb" },
   theme_publish: { label: "Theme Published", color: "#3498db" },
   collection_created: { label: "Collection Created", color: "#10b981" },
   collection_updated: { label: "Collection Updated", color: "#10b981" },
@@ -31,10 +36,15 @@ const importanceConfig: Record<string, { label: string; color: string }> = {
 
 // All event types that the system can produce (from changeDetection.server.ts)
 const ALL_EVENT_TYPES = [
+  "product_updated",
+  "product_created",
+  "product_deleted",
+  "product_snapshot",
   "price_change",
   "visibility_change",
   "inventory_low",
   "inventory_zero",
+  "inventory_update",
   "theme_publish",
   "collection_created",
   "collection_updated",

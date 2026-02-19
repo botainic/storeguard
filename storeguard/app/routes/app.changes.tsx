@@ -53,6 +53,7 @@ const eventConfig: Record<string, { label: string; color: string }> = {
   discount_changed: { label: "Discount Changed", color: "#8b5cf6" },
   discount_deleted: { label: "Discount Deleted", color: "#e74c3c" },
   app_permissions_changed: { label: "App Permissions", color: "#6366f1" },
+  inventory_update: { label: "Stock Update", color: "#2563eb" },
   domain_changed: { label: "Domain Changed", color: "#0891b2" },
   domain_removed: { label: "Domain Removed", color: "#e74c3c" },
 };
