@@ -2,7 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs, HeadersFunction } from "re
 import { Form, useLoaderData, useActionData, useNavigation, useNavigate, useRouteError, useSearchParams } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState } from "react";
-import { authenticate, PRO_MONTHLY_PLAN } from "../shopify.server";
+import { authenticate, PRO_MONTHLY_PLAN, ADMIN_SHOPS } from "../shopify.server";
 import { getOrCreateShop, updateShopSettings, type ShopSettings } from "../services/shopService.server";
 
 interface ActionResponse {
@@ -20,7 +20,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     plans: [PRO_MONTHLY_PLAN],
   });
   
-  const plan = hasActivePayment ? "pro" as const : "free" as const;
+  const isAdminShop = ADMIN_SHOPS.includes(session.shop);
+  const plan = (hasActivePayment || isAdminShop) ? "pro" as const : "free" as const;
   
   // Sync billing status to DB (so webhook processors can check plan without billing API)
   if (settings.plan !== plan) {

@@ -1,4 +1,5 @@
 import db from "../db.server";
+import { ADMIN_SHOPS } from "../shopify.server";
 
 export interface ShopSettings {
   plan: "free" | "pro";
@@ -229,6 +230,7 @@ export async function downgradeShopToFree(shopDomain: string): Promise<void> {
  * Check if a shop is on the Pro plan.
  */
 export async function isProPlan(shopDomain: string): Promise<boolean> {
+  if (ADMIN_SHOPS.includes(shopDomain)) return true;
   const shop = await db.shop.findUnique({
     where: { shopifyDomain: shopDomain },
     select: { plan: true },
@@ -249,6 +251,8 @@ export async function canTrackFeature(
 
   if (!shop) return false;
 
+  const isPro = shop.plan === "pro" || ADMIN_SHOPS.includes(shopDomain);
+
   switch (feature) {
     case "prices":
       return shop.trackPrices;
@@ -257,15 +261,15 @@ export async function canTrackFeature(
     case "inventory":
       return shop.trackInventory;
     case "themes":
-      return shop.plan === "pro" && shop.trackThemes;
+      return isPro && shop.trackThemes;
     case "collections":
       return shop.trackCollections;
     case "discounts":
-      return shop.plan === "pro" && shop.trackDiscounts;
+      return isPro && shop.trackDiscounts;
     case "app_permissions":
-      return shop.plan === "pro" && shop.trackAppPermissions;
+      return isPro && shop.trackAppPermissions;
     case "domains":
-      return shop.plan === "pro" && shop.trackDomains;
+      return isPro && shop.trackDomains;
     default:
       return false;
   }

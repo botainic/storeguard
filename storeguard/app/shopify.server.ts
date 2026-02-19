@@ -12,9 +12,11 @@ import prisma from "./db.server";
 export const PRO_MONTHLY_PLAN = "StoreGuard Pro";
 
 // Admin shops that get Pro features for free (your test stores)
+// Reads from ADMIN_SHOPS env var (comma-separated) + hardcoded defaults
 export const ADMIN_SHOPS = [
   "storeguard-dev.myshopify.com",
-  // Add your personal store here if different
+  "insight-ops-dev.myshopify.com",
+  ...(process.env.ADMIN_SHOPS?.split(",").map((s) => s.trim()).filter(Boolean) || []),
 ];
 
 const shopify = shopifyApp({
