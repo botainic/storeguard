@@ -1,9 +1,14 @@
 /**
  * Onboarding step definitions and validation logic.
  * Pure functions — no database or server dependencies.
+ *
+ * New 3-step flow (BOT-29 Risk Scan onboarding):
+ *   1. setup   — email + monitor toggles + "Start Monitoring" button
+ *   2. scanning — live risk scan progress
+ *   3. results  — risk scan results with tension language
  */
 
-export const ONBOARDING_STEPS = ["welcome", "email", "monitors", "sync", "done"] as const;
+export const ONBOARDING_STEPS = ["setup", "scanning", "results"] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
 export function getStepIndex(step: OnboardingStep): number {

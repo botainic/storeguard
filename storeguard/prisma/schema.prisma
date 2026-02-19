@@ -47,6 +47,8 @@ model Shop {
   trackDomains    Boolean   @default(false) // Pro only
   lowStockThreshold Int     @default(5) // Alert when inventory drops below this
   instantAlerts   Boolean   @default(false) // Send alerts immediately (Pro only)
+  riskScanResult  Json?     // Cached initial risk scan results
+  riskScannedAt   DateTime? // When risk scan completed
   installedAt     DateTime  @default(now())
   onboardedAt     DateTime? // When onboarding was completed (null = not onboarded)
   uninstalledAt   DateTime?

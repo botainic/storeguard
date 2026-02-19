@@ -13,61 +13,53 @@ import {
 } from "./onboarding.utils";
 
 describe("ONBOARDING_STEPS", () => {
-  it("has exactly 5 steps in correct order", () => {
-    expect(ONBOARDING_STEPS).toEqual(["welcome", "email", "monitors", "sync", "done"]);
-    expect(ONBOARDING_STEPS).toHaveLength(5);
+  it("has exactly 3 steps in correct order", () => {
+    expect(ONBOARDING_STEPS).toEqual(["setup", "scanning", "results"]);
+    expect(ONBOARDING_STEPS).toHaveLength(3);
   });
 });
 
 describe("getStepIndex", () => {
   it("returns correct index for each step", () => {
-    expect(getStepIndex("welcome")).toBe(0);
-    expect(getStepIndex("email")).toBe(1);
-    expect(getStepIndex("monitors")).toBe(2);
-    expect(getStepIndex("sync")).toBe(3);
-    expect(getStepIndex("done")).toBe(4);
+    expect(getStepIndex("setup")).toBe(0);
+    expect(getStepIndex("scanning")).toBe(1);
+    expect(getStepIndex("results")).toBe(2);
   });
 });
 
 describe("isValidStep", () => {
   it("returns true for valid steps", () => {
-    expect(isValidStep("welcome")).toBe(true);
-    expect(isValidStep("email")).toBe(true);
-    expect(isValidStep("monitors")).toBe(true);
-    expect(isValidStep("sync")).toBe(true);
-    expect(isValidStep("done")).toBe(true);
+    expect(isValidStep("setup")).toBe(true);
+    expect(isValidStep("scanning")).toBe(true);
+    expect(isValidStep("results")).toBe(true);
   });
 
   it("returns false for invalid steps", () => {
     expect(isValidStep("invalid")).toBe(false);
     expect(isValidStep("")).toBe(false);
-    expect(isValidStep("setup")).toBe(false);
+    expect(isValidStep("welcome")).toBe(false);
   });
 });
 
 describe("getNextStep", () => {
   it("returns the next step", () => {
-    expect(getNextStep("welcome")).toBe("email");
-    expect(getNextStep("email")).toBe("monitors");
-    expect(getNextStep("monitors")).toBe("sync");
-    expect(getNextStep("sync")).toBe("done");
+    expect(getNextStep("setup")).toBe("scanning");
+    expect(getNextStep("scanning")).toBe("results");
   });
 
   it("returns null for the last step", () => {
-    expect(getNextStep("done")).toBeNull();
+    expect(getNextStep("results")).toBeNull();
   });
 });
 
 describe("getPreviousStep", () => {
   it("returns the previous step", () => {
-    expect(getPreviousStep("email")).toBe("welcome");
-    expect(getPreviousStep("monitors")).toBe("email");
-    expect(getPreviousStep("sync")).toBe("monitors");
-    expect(getPreviousStep("done")).toBe("sync");
+    expect(getPreviousStep("scanning")).toBe("setup");
+    expect(getPreviousStep("results")).toBe("scanning");
   });
 
   it("returns null for the first step", () => {
-    expect(getPreviousStep("welcome")).toBeNull();
+    expect(getPreviousStep("setup")).toBeNull();
   });
 });
 
