@@ -298,17 +298,11 @@ export default function Settings() {
           )}
 
           {settings.plan === "free" ? (
-            <button
-              type="button"
-              onClick={() => {
-                // Managed Pricing: Shopify handles billing through the app listing
-                const storeName = shop.replace(".myshopify.com", "");
-                window.open(
-                  `https://admin.shopify.com/store/${storeName}/charges/insightops/pricing_plans`,
-                  "_top"
-                );
-              }}
+            <a
+              href="shopify://admin/charges/insightops/pricing_plans"
+              target="_top"
               style={{
+                display: "inline-block",
                 background: "#1d4ed8",
                 color: "#fff",
                 padding: "10px 16px",
@@ -317,10 +311,11 @@ export default function Settings() {
                 border: "none",
                 borderRadius: 6,
                 cursor: "pointer",
+                textDecoration: "none",
               }}
             >
               Upgrade to Pro — $19/mo
-            </button>
+            </a>
           ) : (
             <button
               type="button"
